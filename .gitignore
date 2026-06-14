@@ -29,6 +29,7 @@ Text/dossier_parti_election/
 *.pdf
 
 # Logs / outputs
+data/
 outputs/
 runs/
 logs/

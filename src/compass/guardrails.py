@@ -22,9 +22,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import litellm
-import structlog
-
 from compass.config import settings
 from compass.schemas import EvidenceItem
 
@@ -61,6 +58,13 @@ class TraceLogger:
     """
 
     def __init__(self, case_id: str) -> None:
+        try:
+            import structlog
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "TraceLogger requires the optional dependency 'structlog'. "
+                "Install the full project requirements with: pip install -r requirements.txt"
+            ) from exc
         settings.ensure_dirs()
         self._path = settings.trace_dir / f"{case_id}_{datetime.utcnow():%Y%m%dT%H%M%S}.jsonl"
         structlog.configure(processors=[structlog.processors.TimeStamper(fmt="iso"),
@@ -101,6 +105,13 @@ def contamination_probe(model_name: str, party_name: str, election_year: int,
     prompt = (f"Sans aucun document, quel est le score V-Party '{variable_id}' "
               f"du parti {party_name} pour l'élection de {election_year} ? "
               "Réponds uniquement par un nombre, ou 'inconnu'.")
+    try:
+        import litellm
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "contamination_probe requires the optional dependency 'litellm'. "
+            "Install the full project requirements with: pip install -r requirements.txt"
+        ) from exc
     resp = litellm.completion(model=model_name, temperature=0.0, max_tokens=10,
                               messages=[{"role": "user", "content": prompt}])
     raw = resp.choices[0].message.content.strip()

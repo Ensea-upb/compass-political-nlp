@@ -28,6 +28,20 @@ Generated party profile: examples/sample_party_profile.json
 Validation status: passed
 ```
 
+For a run aligned with the real architecture, start with:
+
+```powershell
+python examples/run_real_architecture.py smoke
+```
+
+Then, on an environment with the full dependencies and model-download access:
+
+```powershell
+python examples/run_real_architecture.py full --reset
+```
+
+See `docs/09_onyxia_runbook.md` for the Onyxia step-by-step guide.
+
 ## Research Pipeline
 
 ```text

@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import statistics
 
-import krippendorff
 import numpy as np
 
 from compass.schemas import AggregatedJudgment, JudgeAnswer
@@ -78,6 +77,13 @@ def panel_alpha(panel_scores: np.ndarray) -> float:
         Alpha ordinal — comparable aux standards humains du champ (κ ≥ 0.60
         retenu comme seuil dans Partie 3 §4.1).
     """
+    try:
+        import krippendorff
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "panel_alpha requires the optional dependency 'krippendorff'. "
+            "Install the full project requirements with: pip install -r requirements.txt"
+        ) from exc
     return float(krippendorff.alpha(reliability_data=panel_scores,
                                     level_of_measurement="ordinal"))
 

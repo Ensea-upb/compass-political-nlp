@@ -24,6 +24,7 @@ or ce contrat est la condition du contrôle temporel (C15).
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import date
 from pathlib import Path
@@ -52,6 +53,19 @@ class DocumentPipeline:
         self._min_chars = min_chars_for_text_pdf
 
     # ------------------------------------------------------------------ ingestion
+    def ingest_text(self, text: str, meta: DocumentMeta) -> list[Segment]:
+        """Ingests already extracted text, mainly for synthetic/public examples.
+
+        The real research pipeline normally enters through PDF or URL ingestion.
+        This method keeps the same metadata, language, hashing and segmentation
+        contract, while avoiding private PDFs in the public repository.
+        """
+        if not text.strip():
+            raise ValueError("Texte vide : ingestion refusée.")
+        meta.temporal_status = TemporalStatus.VERIFIED
+        meta.eligible_for_historical_reasoning = True
+        return self._finalize(text, meta)
+
     def ingest_pdf(self, path: Path, meta: DocumentMeta) -> list[Segment]:
         """Extrait un PDF ; bascule en OCR si la couche texte est vide.
 
@@ -123,4 +137,57 @@ class DocumentPipeline:
     def _finalize(self, text: str, meta: DocumentMeta) -> list[Segment]:
         """Nettoyage léger, détection de langue, hash, segmentation."""
         text = " ".join(text.split())  # normalisation des espaces uniquement
-        meta.com
+        meta.compute_hash(text)
+
+        detected = _LANG_DETECTOR.detect_language_of(text)
+        if detected is not None:
+            try:
+                meta.language = detected.iso_code_639_1.name.lower()
+            except AttributeError:
+                meta.language = detected.name.lower()[:2]
+
+        chunks = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if not chunks:
+            chunks = [text]
+
+        doc_id = meta.doc_id or str(uuid.uuid4())
+        meta.doc_id = doc_id
+        return [
+            Segment(
+                segment_id=f"{doc_id}:{idx:04d}",
+                doc_id=doc_id,
+                text=chunk,
+                meta=meta.model_copy(deep=True),
+            )
+            for idx, chunk in enumerate(chunks, start=1)
+        ]
+
+
+def make_meta(
+    *,
+    country_iso3: str,
+    doc_date: date,
+    doc_type: str,
+    language: str = "und",
+    party_id: str | None = None,
+    election_id: str | None = None,
+    source_url: str | None = None,
+    source_path: str | None = None,
+    reliability: SourceReliability = SourceReliability.UNKNOWN,
+) -> DocumentMeta:
+    """Builds a verified ``DocumentMeta`` object with the project defaults."""
+    return DocumentMeta(
+        doc_id=str(uuid.uuid4()),
+        country_iso3=country_iso3.upper(),
+        party_id=party_id,
+        doc_date=doc_date,
+        publication_date=doc_date,
+        temporal_status=TemporalStatus.VERIFIED,
+        eligible_for_historical_reasoning=True,
+        doc_type=doc_type,
+        language=language,
+        source_url=source_url,
+        source_path=source_path,
+        election_id=election_id,
+        reliability=reliability,
+    )
