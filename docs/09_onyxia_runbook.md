@@ -23,6 +23,7 @@ The smoke test uses the lightweight demo dependencies only.
 ## 3. Smoke Test
 
 ```bash
+pip install -r requirements-test.txt
 python examples/run_real_architecture.py smoke
 ```
 
@@ -59,7 +60,7 @@ v2pavote: score=42.5, ...
 
 ## 5. If Something Fails
 
-- Missing Python package in smoke mode: rerun `pip install -r requirements-demo.txt`.
+- Missing Python package in smoke/test mode: rerun `pip install -r requirements-test.txt`.
 - Missing Python package in full mode: rerun `pip install -r requirements-full.txt`.
 - Model download blocked: allow outbound internet or pre-populate the Hugging Face cache in the Onyxia service.
 - Memory error: restart with more RAM.

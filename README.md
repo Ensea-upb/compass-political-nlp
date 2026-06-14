@@ -19,6 +19,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-demo.txt
 python examples/run_demo.py
+pip install -r requirements-test.txt
 python -m pytest
 ```
 
@@ -70,6 +71,7 @@ compass-political-nlp/
 |-- LICENSE
 |-- .gitignore
 |-- requirements-demo.txt
+|-- requirements-test.txt
 |-- requirements-full.txt
 |-- pyproject.toml
 |-- docs/
