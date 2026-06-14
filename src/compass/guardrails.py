@@ -112,7 +112,8 @@ def contamination_probe(model_name: str, party_name: str, election_year: int,
             "contamination_probe requires the optional dependency 'litellm'. "
             "Install the full project requirements with: pip install -r requirements.txt"
         ) from exc
-    resp = litellm.completion(model=model_name, temperature=0.0, max_tokens=10,
+    resp = litellm.completion(**settings.litellm_kwargs(model_name),
+                              temperature=0.0, max_tokens=10,
                               messages=[{"role": "user", "content": prompt}])
     raw = resp.choices[0].message.content.strip()
     knows = bool(re.fullmatch(r"-?\d+([.,]\d+)?", raw))

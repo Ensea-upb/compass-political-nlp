@@ -167,7 +167,7 @@ class InternalRetriever:
         )
         try:
             resp = litellm.completion(
-                model=settings.hyde_model,
+                **settings.litellm_kwargs(settings.hyde_model),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=settings.hyde_max_tokens,

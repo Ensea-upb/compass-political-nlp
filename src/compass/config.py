@@ -16,11 +16,62 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class CompassSettings(BaseSettings):
+class LLMConfig(BaseSettings):
+    """LLM backend configuration.
+
+    Defaults target a local OpenAI-compatible server, for example vLLM on
+    Onyxia. Every value can be overridden with ``COMPASS_*`` environment
+    variables.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="COMPASS_", env_file=".env", env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    judge_models: list[str] = Field(default_factory=lambda: [
+        "Qwen/Qwen3-32B",
+        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    ])
+    hyde_model: str = "Qwen/Qwen3-14B"
+    vision_model: str = "Qwen/Qwen2.5-VL-32B-Instruct"
+
+    llm_backend: str = "local"          # "local" | "api"
+    llm_api_base: str = "http://localhost:8000/v1"
+    llm_api_key: str = "EMPTY"
+    llm_temperature: float = 0.0
+    llm_max_tokens: int = 2000
+
+    @field_validator("judge_models", mode="before")
+    @classmethod
+    def _parse_judge_models(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    def litellm_model(self, model_name: str) -> str:
+        """Returns the LiteLLM model identifier for the configured backend."""
+        if self.llm_backend == "local" and not model_name.startswith("openai/"):
+            return f"openai/{model_name}"
+        return model_name
+
+    def litellm_kwargs(self, model_name: str) -> dict[str, str]:
+        """Connection kwargs for LiteLLM completion calls."""
+        if self.llm_backend == "local":
+            return {
+                "model": self.litellm_model(model_name),
+                "api_base": self.llm_api_base,
+                "api_key": self.llm_api_key,
+            }
+        return {"model": model_name}
+
+
+class CompassSettings(LLMConfig):
     """Paramètres globaux, injectés dans chaque composant à la construction.
 
     Attributes:
@@ -38,9 +89,8 @@ class CompassSettings(BaseSettings):
         political_classifier: Political DEBATE (Political Analysis 2025) —
             zero/few-shot spécialisé textes politiques, ANGLAIS uniquement ;
             bascule automatique vers nli_model hors anglais (§3).
-        judge_models: identifiants litellm des juges (C11) — modèles de bases
-            DIFFÉRENTES, condition d'indépendance (Weidmann et al. 2026) ;
-            panel à confirmer sur AfroBench au pilote (§6).
+        judge_models: identifiants Hugging Face des juges locaux (C11) — modèles
+            de bases DIFFÉRENTES, servis via endpoint OpenAI-compatible local.
         llm_temperature: 0.0 pour la reproductibilité (Ornstein et al. 2025).
         search_max_queries: budget de requêtes par cas — borne la boucle C07-C08.
         search_max_iterations: nombre maximal de cycles suffisance-recherche.
@@ -48,7 +98,8 @@ class CompassSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="COMPASS_", env_file=".env", env_file_encoding="utf-8"
+        env_prefix="COMPASS_", env_file=".env", env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     data_dir: Path = Path("data")
@@ -63,12 +114,6 @@ class CompassSettings(BaseSettings):
     nli_model: str = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
     political_classifier: str = "mlburnham/Political_DEBATE_large_v1.0"
 
-    judge_models: list[str] = Field(
-        default=["gpt-4o", "mistral/mistral-large-latest", "claude-sonnet-4-6"]
-    )
-    llm_temperature: float = 0.0
-    llm_max_tokens: int = 2000
-
     search_max_queries: int = 8
     search_max_iterations: int = 2
     sufficiency_threshold: float = 0.6  # provisoire — à calibrer sur courbe risque-couverture
@@ -76,9 +121,7 @@ class CompassSettings(BaseSettings):
     # --- HyDE (Hypothetical Document Embeddings, Gao et al. 2022) ---
     # Génère un passage hypothétique avant le retrieval dense pour mieux
     # capturer la sémantique des documents cibles (vs. la question abstraite).
-    # Le modèle HyDE doit être rapide (max_tokens court) — gpt-4o-mini suffit.
     hyde_enabled: bool = True
-    hyde_model: str = "gpt-4o-mini"
     hyde_max_tokens: int = 250
 
     # --- Chunking hiérarchique parent-child (Gap 1) ---
@@ -96,4 +139,3 @@ class CompassSettings(BaseSettings):
 
 
 settings = CompassSettings()
-

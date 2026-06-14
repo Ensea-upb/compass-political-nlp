@@ -20,8 +20,8 @@
 | C07 Test de suffisance | `c07_test_suffisance.py` | scikit-learn (LogReg calibrée) | traits métier, seuil calibré R-2 |
 | C08 Recherche active | `c08_recherche_active.py` | ddgs/Tavily + trafilatura (via C01) | budget, fiabilité des domaines |
 | C09 Diagnostic | `c09_moteur_diagnostic.py` | NLI multilingue (mDeBERTa XNLI) | structure du rapport |
-| C10 Raisonnement adaptable | `c10_moteur_raisonnement.py` | litellm + transformers + pandas | routeur par régime de preuve |
-| C11 Juges multiples | `c11_juges_multiples.py` | litellm (modèles de bases différentes) | orchestration du panel |
+| C10 Raisonnement adaptable | `c10_moteur_raisonnement.py` | litellm + endpoint local vLLM + transformers + pandas | routeur par régime de preuve |
+| C11 Juges multiples | `c11_juges_multiples.py` | modèles Hugging Face open-weight via vLLM | orchestration du panel |
 | C12 Agrégation | `c12_agregation.py` | numpy/scipy + krippendorff | décomposition de l'incertitude |
 | C13 Sortie finale | `c13_sortie_finale.py` | pydantic + NLI (réutilisé) — cadre AIS | mise en forme |
 | C14 Validation | `c14_validation.py` | scikit-learn, scipy ; étalon V-Party importé | ECE (formule standard), strates |
@@ -48,7 +48,7 @@ python -m venv .venv && source .venv/bin/activate   # Windows : .venv\Scripts\ac
 pip install -r requirements-full.txt
 python -m spacy download xx_sent_ud_sm              # optionnel : sentencizer amélioré
 # Binaire OCR : installer tesseract-ocr + paquets langue fra/eng (apt, brew ou installeur Windows)
-# Clés API (jamais en dur) : export OPENAI_API_KEY=..., MISTRAL_API_KEY=..., ANTHROPIC_API_KEY=...
+# Mode local Onyxia : export COMPASS_LLM_BACKEND=local ; export COMPASS_LLM_API_BASE=http://localhost:8000/v1
 ```
 
 Critère de sortie : `python -c "import config, schemas"` sans erreur.

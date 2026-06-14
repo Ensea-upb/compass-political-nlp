@@ -44,6 +44,7 @@ pip install -r requirements-full.txt
 ```
 
 The full run downloads NLP models on first execution. On Onyxia, prefer a service with enough memory for `sentence-transformers`, `transformers` and `torch`.
+For local open-weight LLM serving, see `docs/11_onyxia_hf_models.md`.
 
 ```bash
 python examples/run_real_architecture.py full --reset

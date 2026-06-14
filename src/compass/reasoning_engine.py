@@ -124,7 +124,8 @@ class ReasoningEngine:
         prompt = self._build_prompt(sheet, diagnosis, prompt_variant)
         # Compatibilité litellm : response_format n'est pas supporté par tous
         # les fournisseurs — repli sans contrainte + parsing strict (audit §8).
-        kwargs = dict(model=model_name, temperature=settings.llm_temperature,
+        kwargs = dict(settings.litellm_kwargs(model_name),
+                      temperature=settings.llm_temperature,
                       max_tokens=settings.llm_max_tokens,
                       messages=[{"role": "user", "content": prompt}])
         try:
@@ -189,4 +190,3 @@ Réponds en JSON strict :
   "declared": ["..."], "observed": ["..."], "inferred": ["..."]}}
 N'utilise AUCUNE connaissance extérieure aux preuves fournies. Si les preuves
 sont insuffisantes, dis-le dans rationale et abaisse confidence."""
-

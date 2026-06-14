@@ -55,7 +55,7 @@ Sources : [évaluation htmldate](https://htmldate.readthedocs.io/en/latest/evalu
 
 ## 6. Juges LLM (C11) — couverture linguistique du panel
 
-**Décision : panel hétérogène inchangé (GPT / Mistral / Claude via litellm), MAIS sélection finale conditionnée à un benchmark langues africaines au pilote, avec `AfroBench` comme grille.**
+**Décision : panel hétérogène open-weight via Hugging Face/vLLM, avec sélection finale conditionnée à un benchmark langues africaines au pilote, avec `AfroBench` comme grille.**
 
 Justification : la recherche confirme que la couverture africaine des LLM généralistes est inégale et mal documentée ; les ressources dédiées existent désormais pour la mesurer — AfroBench (15 tâches, 64 langues africaines), IrokoBench — et des modèles adaptés émergent (Aya Expanse 8B/32B, 23 langues ; InkubaLM 0.4B pré-entraîné sur isiXhosa/isiZulu/swahili/haoussa/yoruba ; Lugha-Llama). Conséquence opérationnelle : au pilote, exécuter les juges candidats sur le sous-ensemble AfroBench des langues du corpus AVANT de figer le panel ; Aya Expanse entre comme 4e juge candidat si le corpus contient des langues qu'il couvre. La variation rhétorique est traitée par la variante de prompt `behavior_first` (C10) et par le test d'adhérence par variable — pas par une confiance aveugle dans le multilinguisme déclaré des modèles.
 

@@ -46,6 +46,7 @@ python examples/run_real_architecture.py full --reset
 ```
 
 See `docs/09_onyxia_runbook.md` for the Onyxia step-by-step guide.
+See `docs/11_onyxia_hf_models.md` for local Hugging Face model serving with vLLM.
 
 ## Research Pipeline
 
@@ -75,6 +76,7 @@ compass-political-nlp/
 |-- requirements-full.txt
 |-- pyproject.toml
 |-- docs/
+|-- scripts/
 |-- src/
 |   `-- compass/
 |-- examples/

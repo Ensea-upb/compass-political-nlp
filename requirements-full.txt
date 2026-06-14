@@ -5,6 +5,7 @@
 pydantic>=2.5
 pydantic-settings>=2.1
 PyYAML>=6.0
+huggingface_hub>=0.24
 
 # C01 - document pipeline
 PyMuPDF>=1.24

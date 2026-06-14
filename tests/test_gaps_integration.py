@@ -173,22 +173,30 @@ class TestGap2_HyDE:
     def test_generate_hyde_doc_calls_litellm(self):
         with patch("compass.internal_retrieval.litellm") as mock_ll, \
              patch("compass.internal_retrieval.settings") as s:
-            s.hyde_model = "gpt-4o-mini"
+            s.hyde_model = "Qwen/Qwen3-14B"
             s.hyde_max_tokens = 250
+            s.litellm_kwargs.return_value = {
+                "model": "openai/Qwen/Qwen3-14B",
+                "api_base": "http://localhost:8000/v1",
+                "api_key": "EMPTY",
+            }
             resp = MagicMock()
             resp.choices[0].message.content = "Passage hypothétique."
             mock_ll.completion.return_value = resp
 
             out = self.r._generate_hyde_doc(_sheet())
             assert out == "Passage hypothétique."
+            s.litellm_kwargs.assert_called_once_with("Qwen/Qwen3-14B")
             kw = mock_ll.completion.call_args[1]
-            assert kw["model"] == "gpt-4o-mini"
+            assert kw["model"] == "openai/Qwen/Qwen3-14B"
+            assert kw["api_base"] == "http://localhost:8000/v1"
+            assert kw["api_key"] == "EMPTY"
             assert kw["temperature"] == 0.3
 
     def test_hyde_degrades_gracefully_on_api_error(self):
         with patch("compass.internal_retrieval.litellm") as mock_ll, \
              patch("compass.internal_retrieval.settings") as s:
-            s.hyde_model = "gpt-4o-mini"
+            s.hyde_model = "Qwen/Qwen3-14B"
             s.hyde_max_tokens = 250
             mock_ll.completion.side_effect = Exception("API down")
             assert self.r._generate_hyde_doc(_sheet()) == ""
