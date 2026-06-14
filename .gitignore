@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+.pytest_cache/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Office temp files
+~$*
+
+# Private / internal
+Claude_code/
+.claude/
+Pour_MR_RIBONI/
+Les Articles/
+Text/dossier_parti_election/
+
+# Documents not for public release
+*.docx
+*.pptx
+*.pdf
+
+# Logs / outputs
+outputs/
+runs/
+logs/
+*.log

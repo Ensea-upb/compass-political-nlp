@@ -1,0 +1,24 @@
+{
+  "source_document": "sample_manifesto.txt",
+  "themes": [
+    "economy",
+    "sovereignty",
+    "democracy",
+    "social_policy"
+  ],
+  "evidence": {
+    "economy": [
+      "We will build a stronger economy through local industry, responsible tax reform, and investment in jobs."
+    ],
+    "sovereignty": [
+      "Our movement defends national sovereignty while cooperating with regional partners on peace and trade."
+    ],
+    "democracy": [
+      "Democracy requires transparent elections, accountable institutions, and equal rights before the law."
+    ],
+    "social_policy": [
+      "We will improve schools, youth opportunities, and public health services in every region."
+    ]
+  },
+  "summary": "The document emphasizes economy, sovereignty, democracy, social policy."
+}
