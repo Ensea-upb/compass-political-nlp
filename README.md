@@ -1,5 +1,7 @@
 # COMPASS Political NLP
 
+![tests](https://github.com/Ensea-upb/compass-political-nlp/actions/workflows/tests.yml/badge.svg)
+
 Research-oriented NLP framework for extracting, structuring, and validating political positions from party manifestos and heterogeneous political documents.
 
 COMPASS combines computational social science, multilingual NLP, document engineering, and political economy. The public repository is a clean showcase version: reusable code, concise documentation, synthetic examples, tests, and no private PDFs, articles, slides, supervision notes, or internal work files.
@@ -15,8 +17,9 @@ COMPASS is designed as an auditable pipeline that moves from raw political evide
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-demo.txt
 python examples/run_demo.py
+python -m pytest
 ```
 
 Expected output:
@@ -37,6 +40,7 @@ python examples/run_real_architecture.py smoke
 Then, on an environment with the full dependencies and model-download access:
 
 ```powershell
+pip install -r requirements-full.txt
 python examples/run_real_architecture.py full --reset
 ```
 
@@ -54,40 +58,39 @@ Raw political documents
 -> final political analysis
 ```
 
+<p align="center">
+  <img src="assets/compass_pipeline.png" width="760" alt="COMPASS political NLP pipeline">
+</p>
+
 ## Repository Structure
 
 ```text
 compass-political-nlp/
-├── README.md
-├── LICENSE
-├── .gitignore
-├── requirements.txt
-├── pyproject.toml
-├── docs/
-├── src/
-│   └── compass/
-├── examples/
-├── notebooks/
-├── tests/
-└── assets/
+|-- README.md
+|-- LICENSE
+|-- .gitignore
+|-- requirements-demo.txt
+|-- requirements-full.txt
+|-- pyproject.toml
+|-- docs/
+|-- src/
+|   `-- compass/
+|-- examples/
+|-- notebooks/
+|-- tests/
+`-- assets/
 ```
 
 ## Source Code Philosophy
 
-The `src/compass` package is now extracted from the original `compass_system`
-research code, with public names replacing the internal `c01`, `c02`, ...
-component labels:
+The `src/compass` package is extracted from the original `compass_system` research code, with public names replacing the internal `c01`, `c02`, ... component labels:
 
 - `document_pipeline.py` keeps the C01 ingestion logic;
 - `general_memory.py` and `country_memory.py` keep the C02/C03 memory split;
-- `vparty_registry.py`, `internal_retrieval.py`, `diagnostic_engine.py`,
-  `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`,
-  `final_output.py`, `validation.py`, and `guardrails.py` preserve the
-  downstream architecture;
+- `vparty_registry.py`, `internal_retrieval.py`, `diagnostic_engine.py`, `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`, `final_output.py`, `validation.py`, and `guardrails.py` preserve the downstream architecture;
 - `schemas.py` remains the interface contract between components.
 
-The deterministic demo is intentionally isolated in `compass.demo`. It is a
-zero-credential quickstart, not a replacement for the research pipeline.
+The deterministic demo is intentionally isolated in `compass.demo`. It is a zero-credential quickstart, not a replacement for the research pipeline.
 
 ## Current Scope
 
@@ -99,9 +102,7 @@ The public version currently includes:
 - a deterministic synthetic demo pipeline for quick verification;
 - tests for the public demo.
 
-The full research pipeline depends on OCR, PDF parsing, embeddings, reranking,
-NLI, LLM-assisted coding, and human validation. The quick demo avoids those
-heavy dependencies so the repository can still be checked immediately.
+The full research pipeline depends on OCR, PDF parsing, embeddings, reranking, NLI, LLM-assisted coding, and human validation. The quick demo avoids those heavy dependencies so the repository can still be checked immediately.
 
 ## Data Policy
 

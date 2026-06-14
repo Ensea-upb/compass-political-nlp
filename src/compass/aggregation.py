@@ -22,8 +22,6 @@ from __future__ import annotations
 import logging
 import statistics
 
-import numpy as np
-
 from compass.schemas import AggregatedJudgment, JudgeAnswer
 
 logger = logging.getLogger(__name__)
@@ -54,13 +52,13 @@ def aggregate(answers: list[JudgeAnswer], method: str = "median") -> AggregatedJ
         raise ValueError("Aucun score exploitable dans le panel.")
 
     if method == "mean":
-        final = float(np.mean(scores))
+        final = float(sum(scores) / len(scores))
     elif method == "median":
-        final = float(np.median(scores))
+        final = float(statistics.median(scores))
     else:  # majority — pour échelles ordinales discrètes
         final = float(statistics.mode([round(s) for s in scores]))
 
-    disagreement = float(np.std(scores)) if len(scores) > 1 else 0.0
+    disagreement = float(statistics.pstdev(scores)) if len(scores) > 1 else 0.0
     logger.info("Agrégation (%s) : %.2f, désaccord %.2f (n=%d)",
                 method, final, disagreement, len(scores))
     return AggregatedJudgment(score=final, disagreement=disagreement,
@@ -82,7 +80,7 @@ def panel_alpha(panel_scores: np.ndarray) -> float:
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "panel_alpha requires the optional dependency 'krippendorff'. "
-            "Install the full project requirements with: pip install -r requirements.txt"
+            "Install the full project requirements with: pip install -r requirements-full.txt"
         ) from exc
     return float(krippendorff.alpha(reliability_data=panel_scores,
                                     level_of_measurement="ordinal"))

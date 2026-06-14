@@ -45,7 +45,7 @@ C15 traverse tout (temporalité, traces, contamination)
 ```bash
 cd compass_system
 python -m venv .venv && source .venv/bin/activate   # Windows : .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-full.txt
 python -m spacy download xx_sent_ud_sm              # optionnel : sentencizer amélioré
 # Binaire OCR : installer tesseract-ocr + paquets langue fra/eng (apt, brew ou installeur Windows)
 # Clés API (jamais en dur) : export OPENAI_API_KEY=..., MISTRAL_API_KEY=..., ANTHROPIC_API_KEY=...
