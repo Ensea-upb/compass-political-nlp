@@ -126,6 +126,7 @@ def run_smoke() -> None:
         "htmldate",
         "lingua",
         "litellm",
+        "networkx",
     ]
     missing = [name for name in optional if importlib.util.find_spec(name) is None]
     if missing:

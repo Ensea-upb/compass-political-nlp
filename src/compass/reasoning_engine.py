@@ -1,4 +1,4 @@
-﻿"""C10 — Moteur de raisonnement adaptable : la méthode dépend de la variable.
+"""C10 — Moteur de raisonnement adaptable : la méthode dépend de la variable.
 
 ÉTAT DE L'ART RÉUTILISÉ :
     - Patron de routage : Adaptive-RAG (Jeong et al. 2024) — adapter la
@@ -158,6 +158,16 @@ class ReasoningEngine:
         style = ("Sois particulièrement attentif aux comportements observés, qui priment "
                  "sur les déclarations.") if variant == "behavior_first" else \
                 ("Pèse déclarations et comportements à égalité, en signalant les écarts.")
+        # Gap 3 — contexte relationnel du graphe de connaissances (C02b).
+        graph_lines = "\n".join(
+            f"- {g['summary']}" for g in (diagnosis.graph_context or [])[:6]
+        )
+        graph_section = (
+            f"\nCONTEXTE RELATIONNEL [INFÉRÉ — cooccurrences documentaires] :\n"
+            f"{graph_lines}\n"
+            f"Ces relations sont des inférences statistiques, non des faits vérifiés. "
+            f"Poids faible si elles contredisent les preuves documentaires ci-dessus.\n"
+        ) if graph_lines else ""
         return f"""Tu codes la variable {sheet.variable_id} du codebook V-Party.
 QUESTION : {sheet.question}
 DÉFINITION (à appliquer strictement, mot à mot) : {sheet.definition}
@@ -166,7 +176,7 @@ DÉFINITION (à appliquer strictement, mot à mot) : {sheet.definition}
 CRITÈRES D'INCLUSION : {'; '.join(sheet.inclusion_criteria)}
 CRITÈRES D'EXCLUSION : {'; '.join(sheet.exclusion_criteria)}
 {style}
-
+{graph_section}
 PREUVES EN FAVEUR :
 {ev_for or '(aucune)'}
 PREUVES CONTRAIRES :

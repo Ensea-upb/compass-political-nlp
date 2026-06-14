@@ -17,6 +17,7 @@ The real research architecture is exposed through the renamed modules:
 ```text
 src/compass/document_pipeline.py
 src/compass/general_memory.py
+src/compass/political_graph.py
 src/compass/country_memory.py
 src/compass/vparty_registry.py
 src/compass/internal_retrieval.py
@@ -31,3 +32,9 @@ src/compass/orchestrator.py
 ```
 
 This separation keeps the public demo lightweight while preserving the real research pipeline.
+
+Recent integration work adds three research-oriented improvements:
+
+- parent-child chunking in `document_pipeline.py`, so retrieval can rank short passages while retaining their broader parent context;
+- optional HyDE in `internal_retrieval.py`, using a variable-grounded hypothetical passage to improve semantic search;
+- `political_graph.py`, a C02b knowledge-graph component that summarizes inferred relations between political actors under temporal constraints.

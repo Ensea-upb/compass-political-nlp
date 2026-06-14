@@ -1,4 +1,4 @@
-﻿"""Orchestrateur end-to-end (P0-6) — l'avion assemblé.
+"""Orchestrateur end-to-end (P0-6) — l'avion assemblé.
 
 Déroule la chaîne complète pour un cas × des variables, sous traçage C15 :
 
@@ -16,6 +16,7 @@ le cas (jamais avalée).
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from compass.general_memory import GeneralMemory
 from compass.country_memory import CountryMemory
@@ -33,6 +34,9 @@ from compass.guardrails import TraceLogger, assert_temporal_integrity
 from compass.schemas import (CaseKey, FinalAnswer, OutputType, SufficiencyVerdict,
                      VariableMethod)
 
+if TYPE_CHECKING:
+    from compass.political_graph import PoliticalGraph
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,12 +44,13 @@ class CompassRunner:
     """Exécute la chaîne complète pour une unité pays × parti × élection."""
 
     def __init__(self, country: CountryMemory, general: GeneralMemory,
-                 registry: VPartyRegistry, search: ActiveSearchEngine) -> None:
+                 registry: VPartyRegistry, search: ActiveSearchEngine,
+                 graph: "PoliticalGraph | None" = None) -> None:
         self._country = country
         self._registry = registry
         self._search = search
-        self._builder = CaseFileBuilder(general, country)
-        self._retriever = InternalRetriever()
+        self._builder = CaseFileBuilder(general, country, graph=graph)
+        self._retriever = InternalRetriever(country=country)  # HyDE + parent enrichment
         self._qualifier = EvidenceQualifier()
         self._sufficiency = SufficiencyGate()
         self._diagnoser = DiagnosisEngine()
@@ -76,7 +81,7 @@ class CompassRunner:
             # --- boucle bornée : retrieval → qualification → suffisance → enquête
             searches_done = 0
             while True:
-                passages = self._retriever.retrieve(dossier, sheet)
+                passages = self._retriever.retrieve(dossier, sheet, case=case)
                 evidence = self._qualifier.qualify(passages, sheet)
                 assert_temporal_integrity(evidence, case.election_date)  # C15
                 verdict, proba = self._sufficiency.decide(passages, sheet, searches_done)
@@ -95,6 +100,7 @@ class CompassRunner:
                 searches_done += 1
 
             diagnosis = self._diagnoser.diagnose(case, sheet, evidence)
+            diagnosis.graph_context = dossier.graph_context  # Gap 3
             trace.record("diagnosis", variable=var_id,
                          n_for=len(diagnosis.convergent),
                          n_against=len(diagnosis.contradictory),
@@ -134,4 +140,3 @@ class CompassRunner:
         logger.info("Cas %s/%s : %d réponses (trace : %s)",
                     case.party_id, case.election_id, len(answers), trace.path)
         return answers
-

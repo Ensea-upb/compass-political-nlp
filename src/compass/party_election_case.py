@@ -1,4 +1,4 @@
-﻿"""C04 — Dossier parti × élection : le cas instruit.
+"""C04 — Dossier parti × élection : le cas instruit.
 
 ÉTAT DE L'ART RÉUTILISÉ : aucun outil dédié n'existe pour « constituer un dossier
 parti-élection » — mais le composant n'invente rien : il ORCHESTRE C02 et C03
@@ -13,6 +13,7 @@ observables, données structurées pertinentes — borné par la date de l'élec
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -21,6 +22,9 @@ import pandas as pd
 from compass.general_memory import GeneralMemory
 from compass.country_memory import CountryMemory
 from compass.schemas import CaseKey
+
+if TYPE_CHECKING:
+    from compass.political_graph import PoliticalGraph
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +39,21 @@ class CaseFile:
     party_documents: list[dict] = field(default_factory=list)
     structured_facts: dict[str, pd.DataFrame] = field(default_factory=dict)
     general_background: list[dict] = field(default_factory=list)
+    # Gap 3 — Graphe de connaissances politiques (C02b) :
+    # résumés relationnels du voisinage du parti, filtrés temporellement.
+    graph_context: list[dict] = field(default_factory=list)
 
 
 class CaseFileBuilder:
     """Assemble un ``CaseFile`` depuis les mémoires, sous contrainte temporelle."""
 
     def __init__(self, general: GeneralMemory, country: CountryMemory,
-                 context_window_years: int = 5) -> None:
+                 context_window_years: int = 5,
+                 graph: "PoliticalGraph | None" = None) -> None:
         self._general = general
         self._country = country
         self._window = timedelta(days=365 * context_window_years)
+        self._graph = graph  # optionnel : non disponible = pas de graph_context
 
     def build(self, case: CaseKey) -> CaseFile:
         """Construit le dossier — uniquement des éléments antérieurs à l'élection.
@@ -86,6 +95,19 @@ class CaseFileBuilder:
         dossier.general_background = self._general.query(
             "grilles d'analyse des partis : pluralisme, clientélisme, organisation", k=6
         )
+        # --- Gap 3 : contexte relationnel depuis le graphe de connaissances ---
+        if self._graph is not None:
+            dossier.graph_context = self._graph.query_party(
+                party_id=case.party_id,
+                as_of=as_of,
+                k_hops=2,
+                top_k=10,
+            )
+            logger.debug(
+                "Graph context %s/%s : %d résumés relationnels",
+                case.party_id, case.election_id, len(dossier.graph_context),
+            )
+
         logger.info(
             "Dossier %s/%s/%s : %d docs parti, %d contexte",
             case.country_iso3, case.party_id, case.election_id,

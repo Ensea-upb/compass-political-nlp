@@ -1,4 +1,4 @@
-﻿"""C01 — Pipeline documentaire : des sources brutes aux segments datés et traçables.
+"""C01 — Pipeline documentaire : des sources brutes aux segments datés et traçables.
 
 ÉTAT DE L'ART RÉUTILISÉ (rien from scratch — choix vérifiés par recherche web
 le 2026-06-11, justification et alternatives dans CHOIX_COMPOSANTS.md) :
@@ -35,12 +35,15 @@ import trafilatura
 from lingua import LanguageDetectorBuilder
 from PIL import Image
 
+from compass.config import settings
 from compass.schemas import DocumentMeta, Segment, SourceReliability, TemporalStatus
 
 logger = logging.getLogger(__name__)
 
 _LANG_DETECTOR = LanguageDetectorBuilder.from_all_languages().build()
 
+
+_SENT_RE = re.compile(r"(?<=[.!?])\s+")
 
 class DocumentPipeline:
     """Transforme une source brute en liste de ``Segment`` indexables.
@@ -146,21 +149,55 @@ class DocumentPipeline:
             except AttributeError:
                 meta.language = detected.name.lower()[:2]
 
-        chunks = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-        if not chunks:
-            chunks = [text]
+        # --- Niveau 1 : blocs parents (thèmes, ~parent_chunk_size chars) ---
+        sentences = [s.strip() for s in _SENT_RE.split(text) if s.strip()]
+        if not sentences:
+            sentences = [text]
 
         doc_id = meta.doc_id or str(uuid.uuid4())
         meta.doc_id = doc_id
-        return [
-            Segment(
-                segment_id=f"{doc_id}:{idx:04d}",
+
+        parents: list[Segment] = []
+        children: list[Segment] = []
+        buf: list[str] = []
+        buf_len = 0
+        parent_idx = 0
+
+        def _flush_parent() -> None:
+            nonlocal parent_idx
+            if not buf:
+                return
+            parent_block = " ".join(buf)
+            parent_id = f"{doc_id}:p{parent_idx:03d}"
+            parent_seg = Segment(
+                segment_id=parent_id,
                 doc_id=doc_id,
-                text=chunk,
+                text=parent_block,
                 meta=meta.model_copy(deep=True),
+                parent_segment_id=None,
             )
-            for idx, chunk in enumerate(chunks, start=1)
-        ]
+            parents.append(parent_seg)
+            for c_idx, sent in enumerate(buf):
+                child_id = f"{doc_id}:p{parent_idx:03d}c{c_idx:03d}"
+                children.append(Segment(
+                    segment_id=child_id,
+                    doc_id=doc_id,
+                    text=sent,
+                    meta=meta.model_copy(deep=True),
+                    parent_segment_id=parent_id,
+                ))
+            parent_idx += 1
+
+        for sent in sentences:
+            if buf and buf_len + len(sent) > settings.parent_chunk_size:
+                _flush_parent()
+                buf, buf_len = [], 0
+            buf.append(sent)
+            buf_len += len(sent) + 1
+        _flush_parent()
+
+        # Parents en premier (indexés comme contexte), enfants ensuite (indexés pour retrieval)
+        return parents + children
 
 
 def make_meta(

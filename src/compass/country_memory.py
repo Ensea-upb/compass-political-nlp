@@ -1,4 +1,4 @@
-﻿"""C03 — Mémoire pays hybride et historisée.
+"""C03 — Mémoire pays hybride et historisée.
 
 Deux couches : STRUCTURÉE (SQLite) + DOCUMENTAIRE (ChromaDB, datée).
 
@@ -131,8 +131,25 @@ class CountryMemory:
                 "language": s.meta.language,
                 "doc_id": s.doc_id,
                 "country_iso3": s.meta.country_iso3,
+                # Gap 1 — chunking hiérarchique : lien enfant → parent
+                "parent_segment_id": s.parent_segment_id or "",
             } for s in segments],
         )
+
+    def fetch_by_ids(self, segment_ids: list[str]) -> dict[str, str]:
+        """Récupère le texte brut de segments par leurs IDs — utilisé par C06
+        pour injecter le texte parent lors du re-ranking (Gap 1).
+
+        Args:
+            segment_ids: liste d'IDs à récupérer (peut contenir des IDs absents).
+
+        Returns:
+            Dictionnaire {segment_id: text} pour les IDs trouvés.
+        """
+        if not segment_ids:
+            return {}
+        res = self._col.get(ids=segment_ids, include=["documents"])
+        return {sid: doc for sid, doc in zip(res["ids"], res["documents"])}
 
     def query_documents(
         self, question: str, as_of: date, k: int = 12,

@@ -1,4 +1,4 @@
-﻿"""Configuration centralisée du système COMPASS Expert-Pays.
+"""Configuration centralisée du système COMPASS Expert-Pays.
 
 Colonne vertébrale partagée — pas un composant de l'architecture.
 État de l'art réutilisé : pydantic-settings (validation + variables d'environnement),
@@ -72,6 +72,22 @@ class CompassSettings(BaseSettings):
     search_max_queries: int = 8
     search_max_iterations: int = 2
     sufficiency_threshold: float = 0.6  # provisoire — à calibrer sur courbe risque-couverture
+
+    # --- HyDE (Hypothetical Document Embeddings, Gao et al. 2022) ---
+    # Génère un passage hypothétique avant le retrieval dense pour mieux
+    # capturer la sémantique des documents cibles (vs. la question abstraite).
+    # Le modèle HyDE doit être rapide (max_tokens court) — gpt-4o-mini suffit.
+    hyde_enabled: bool = True
+    hyde_model: str = "gpt-4o-mini"
+    hyde_max_tokens: int = 250
+
+    # --- Chunking hiérarchique parent-child (Gap 1) ---
+    # Taille cible des blocs parents en caractères (~3-5 phrases).
+    parent_chunk_size: int = 400
+
+    # --- Graphe de connaissances politiques (C02b, Gap 3) ---
+    graph_path: Path = Path("data/political_graph.graphml")
+    graph_spacy_model: str = "xx_ent_wiki_sm"
 
     def ensure_dirs(self) -> None:
         """Crée les dossiers de travail si absents (idempotent)."""

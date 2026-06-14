@@ -110,6 +110,13 @@ class Segment(BaseModel):
     doc_id: str
     text: str
     meta: DocumentMeta
+    # Chunking hiérarchique (parent-child, Gap 1) :
+    # - None  → segment parent (bloc thématique ~400 chars)
+    # - str   → segment enfant (phrase), pointe vers son parent
+    parent_segment_id: str | None = None
+    # Texte du parent injecté à la volée au moment du re-ranking (C06).
+    # Non persisté dans ChromaDB — rempli par InternalRetriever.
+    parent_text: str | None = None
 
 
 # --------------------------------------------------------------------------- registre
@@ -157,6 +164,9 @@ class Diagnosis(BaseModel):
     missing: list[str] = Field(default_factory=list)
     decisive: list[str] = Field(default_factory=list)
     dominant_language: str = "und"               # P1-6 : routage par langue
+    # Gap 3 — résumés relationnels du graphe de connaissances (C02b).
+    # Régime INFÉRÉ ; injectés dans le prompt du juge comme contexte global.
+    graph_context: list[dict] = Field(default_factory=list)
 
 
 class JudgeAnswer(BaseModel):

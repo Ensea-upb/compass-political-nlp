@@ -86,8 +86,9 @@ compass-political-nlp/
 The `src/compass` package is extracted from the original `compass_system` research code, with public names replacing the internal `c01`, `c02`, ... component labels:
 
 - `document_pipeline.py` keeps the C01 ingestion logic;
-- `general_memory.py` and `country_memory.py` keep the C02/C03 memory split;
-- `vparty_registry.py`, `internal_retrieval.py`, `diagnostic_engine.py`, `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`, `final_output.py`, `validation.py`, and `guardrails.py` preserve the downstream architecture;
+- `general_memory.py`, `political_graph.py`, and `country_memory.py` keep the C02/C02b/C03 memory split;
+- `internal_retrieval.py` supports registry-guided retrieval with optional HyDE and parent-child context enrichment;
+- `vparty_registry.py`, `diagnostic_engine.py`, `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`, `final_output.py`, `validation.py`, and `guardrails.py` preserve the downstream architecture;
 - `schemas.py` remains the interface contract between components.
 
 The deterministic demo is intentionally isolated in `compass.demo`. It is a zero-credential quickstart, not a replacement for the research pipeline.
@@ -98,6 +99,7 @@ The public version currently includes:
 
 - renamed research modules extracted from `compass_system`;
 - the V-Party registry YAML examples;
+- parent-child chunking, optional HyDE retrieval, and a political knowledge graph component;
 - architecture and component-choice documentation;
 - a deterministic synthetic demo pipeline for quick verification;
 - tests for the public demo.
