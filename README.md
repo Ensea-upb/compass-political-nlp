@@ -58,18 +58,36 @@ compass-political-nlp/
 └── assets/
 ```
 
+## Source Code Philosophy
+
+The `src/compass` package is now extracted from the original `compass_system`
+research code, with public names replacing the internal `c01`, `c02`, ...
+component labels:
+
+- `document_pipeline.py` keeps the C01 ingestion logic;
+- `general_memory.py` and `country_memory.py` keep the C02/C03 memory split;
+- `vparty_registry.py`, `internal_retrieval.py`, `diagnostic_engine.py`,
+  `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`,
+  `final_output.py`, `validation.py`, and `guardrails.py` preserve the
+  downstream architecture;
+- `schemas.py` remains the interface contract between components.
+
+The deterministic demo is intentionally isolated in `compass.demo`. It is a
+zero-credential quickstart, not a replacement for the research pipeline.
+
 ## Current Scope
 
 The public version currently includes:
 
-- a deterministic synthetic demo pipeline;
-- compact data schemas;
-- theme retrieval over a sample manifesto;
-- party-profile generation;
-- validation checks;
-- documentation for methodology, taxonomy, architecture, and roadmap.
+- renamed research modules extracted from `compass_system`;
+- the V-Party registry YAML examples;
+- architecture and component-choice documentation;
+- a deterministic synthetic demo pipeline for quick verification;
+- tests for the public demo.
 
-The internal research version can replace the demo retrieval layer with OCR, PDF parsing, embeddings, reranking, NLI, LLM-assisted coding, and human validation while preserving the same modular story.
+The full research pipeline depends on OCR, PDF parsing, embeddings, reranking,
+NLI, LLM-assisted coding, and human validation. The quick demo avoids those
+heavy dependencies so the repository can still be checked immediately.
 
 ## Data Policy
 

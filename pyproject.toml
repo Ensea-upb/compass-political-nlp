@@ -9,7 +9,7 @@ description = "Traceable political NLP pipeline for manifesto and party-profile 
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-dependencies = ["pydantic>=2.7"]
+dependencies = ["pydantic>=2.5", "pydantic-settings>=2.1", "PyYAML>=6.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

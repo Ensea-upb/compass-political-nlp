@@ -1,0 +1,30 @@
+# Transcrit du codebook V-Party v2, §3.1.5 — type A, mais contextuel pour les
+# élections hors couverture Döring & Düpont (post-2019) : composite.
+variable_id: v2paallian
+question: >
+  Was the party part of a temporary pre-electoral alliance in this national
+  election or is the entity actually an alliance?
+definition: >
+  Alliance pré-électorale temporaire : accord formel conclu AVANT le scrutin.
+  Distinct de la coalition gouvernementale post-électorale (frontière D8.1 de
+  la taxonomie COMPASS).
+scale:
+  0: "No."
+  1: "Yes, party was part of an alliance."
+  2: "Yes, entity is an alliance of two or more parties."
+method: composite
+output_type: nominal
+evidence_regimes: [observed]
+required_sources:
+  - "base structurée (import Döring & Düpont) si disponible"
+  - "presse pré-électorale, accords publiés, rapports d'observation"
+inclusion_criteria:
+  - "Accord formel pré-scrutin (candidatures communes, listes communes, désistements)."
+exclusion_criteria:
+  - "Coalition formée APRÈS l'élection -> ne compte pas ici."
+  - "Proximité idéologique sans accord formel -> ne compte pas."
+ambiguous_cases:
+  - "Désistement unilatéral sans accord réciproque documenté : chercher la preuve de l'accord."
+decision_rules:
+  - "Priorité à la donnée structurée si elle existe ; sinon preuve documentaire datée avant le scrutin."
+adherence_passed: false

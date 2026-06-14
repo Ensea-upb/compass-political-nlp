@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from compass import run_demo_pipeline
-from compass.schemas import PoliticalTheme
+from compass.demo import DemoTheme, run_demo_pipeline
 
 
 def test_demo_pipeline_detects_core_themes() -> None:
@@ -9,6 +8,6 @@ def test_demo_pipeline_detects_core_themes() -> None:
     profile, validation = run_demo_pipeline(root / "examples" / "sample_manifesto.txt")
 
     assert validation.passed
-    assert PoliticalTheme.ECONOMY in profile.themes
-    assert PoliticalTheme.SOVEREIGNTY in profile.themes
-    assert PoliticalTheme.DEMOCRACY in profile.themes
+    assert DemoTheme.ECONOMY in profile.themes
+    assert DemoTheme.SOVEREIGNTY in profile.themes
+    assert DemoTheme.DEMOCRACY in profile.themes

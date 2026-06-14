@@ -1,0 +1,22 @@
+# Transcrit du codebook V-Party v2 (Lührmann et al. 2020), §3.1.4 — type A (factuel).
+# Gate R-1 : adherence_passed reste false tant que les tests comportementaux
+# n'ont pas été exécutés et le verdict figé à la main (décision humaine tracée).
+variable_id: v2pavote
+question: "Vote share the party gained in the election to the lower chamber."
+definition: >
+  Part des voix obtenue par le parti à l'élection de la chambre basse.
+  Variable factuelle (type A du codebook) ; source officielle Döring & Düpont (2020).
+scale:
+  numeric: "Pourcentage des voix (0-100)"
+method: structured_query
+output_type: scalar_numeric
+evidence_regimes: [observed]
+required_sources:
+  - "résultats officiels (commission électorale, Döring & Düpont 2020)"
+inclusion_criteria:
+  - "Uniquement l'élection de la chambre basse concernée (date-specific)."
+exclusion_criteria:
+  - "Pas les présidentielles ni les chambres hautes."
+decision_rules:
+  - "SELECT vote_share FROM results WHERE party_id = ? AND election_id = ?"
+adherence_passed: false

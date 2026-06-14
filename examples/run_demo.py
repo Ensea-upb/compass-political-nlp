@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from compass import run_demo_pipeline
+from compass.demo import run_demo_pipeline
 
 
 def main() -> None:

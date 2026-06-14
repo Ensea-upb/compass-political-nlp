@@ -1,0 +1,36 @@
+# Transcrit du codebook V-Party v2, §3.2.15 — type C, connaissance terrain difficile.
+variable_id: v2paclient
+question: >
+  To what extent do the party and its candidates provide targeted and
+  excludable (clientelistic) goods and benefits - such as consumer goods, cash
+  or preferential access to government services - in an effort to keep and
+  gain votes?
+definition: >
+  Targeted and excludable goods delivered directly to individual voters with
+  the explicit intention to keep or gain votes, possibly via brokers or
+  companies as intermediaries (including procurement contracts or favorable
+  regulatory decisions targeted at one specific company in exchange for its
+  workers' votes).
+scale:
+  0: "Not at all."
+  1: "A minor extent."
+  2: "A moderate extent."
+  3: "A large extent."
+  4: "As its main effort."
+method: llm_guided
+output_type: ordinal
+evidence_regimes: [observed, inferred]
+required_sources:
+  - "rapports d'observation électorale, enquêtes (Afrobarometer), presse d'investigation"
+  - "travaux académiques sur le pays — un manifeste seul ne suffit JAMAIS"
+inclusion_criteria:
+  - "Biens CIBLÉS et EXCLUDABLES, avec intention de gagner/garder des voix."
+  - "Intermédiaires (courtiers, entreprises) comptent si ciblage exclusif."
+exclusion_criteria:
+  - "Petits cadeaux de courtoisie communs à tous les candidats (entry ticket) -> NE compte PAS."
+  - "Programmes redistributifs universels (non excludables) -> ne comptent pas."
+ambiguous_cases:
+  - "Distribution pendant les meetings : courtoisie locale ou achat de voix ? Chercher la conditionnalité."
+decision_rules:
+  - "Exiger des preuves observées ; en l'absence de rapports/enquêtes, s'abstenir plutôt qu'inférer du seul discours."
+adherence_passed: false

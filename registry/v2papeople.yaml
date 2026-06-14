@@ -1,0 +1,28 @@
+# Transcrit du codebook V-Party v2, §3.2.2 — type C. DÉPENDANCE de v2xpa_popul
+# (ajoutée à la liste du pilote pour rendre la formule dérivée calculable).
+variable_id: v2papeople
+question: >
+  Do leaders of this party glorify the ordinary people and identify themselves
+  as part of them?
+definition: >
+  Many parties make reference to the "people", but only some leaders describe
+  the ordinary people specifically as a homogenous group and claim that they
+  are part of this group and represent it: no acknowledgement of divergent
+  interests and values in society, but a unified political will of the
+  glorified, romanticized ordinary people.
+scale:
+  0: "Never. The leadership never glorifies and identifies with the ordinary people."
+  1: "Usually not. The leadership generally does not glorify and identify with the ordinary people."
+  2: "About half of the time. The leadership sometimes glorifies and identifies with the ordinary people."
+  3: "Usually. The leadership generally glorifies and identifies with the ordinary people."
+  4: "Always. The leadership always glorifies and identifies with the ordinary people."
+method: llm_guided
+output_type: ordinal
+evidence_regimes: [declared]
+required_sources:
+  - "discours du dirigeant, manifeste, communication de campagne"
+inclusion_criteria:
+  - "Peuple décrit comme groupe HOMOGÈNE à volonté unique, dont le dirigeant se réclame."
+exclusion_criteria:
+  - "Simple mention du peuple ou des électeurs sans homogénéisation ni identification -> non."
+adherence_passed: false

@@ -1,0 +1,39 @@
+# Transcrit du codebook V-Party v2, §3.3.1 — type C, MULTI-SÉLECTION
+# (jusqu'à trois groupes ; agrégation officielle par moyenne, pas IRT).
+variable_id: v2pagroup
+question: >
+  To which particular group in society does the core membership and supporters
+  of this party belong?
+definition: >
+  Choose only the key groups. Up to three groups may be selected; if only one
+  group is most relevant, choose only that group.
+scale:
+  multi: "Sélection de 1 à 3 labels parmi allowed_labels"
+method: llm_guided
+output_type: multi_label
+allowed_labels:
+  - "no_specific_group"
+  - "aristocracy"
+  - "agrarian_elites"
+  - "business_elites"
+  - "military"
+  - "ethnic_or_racial_group"
+  - "religious_group"
+  - "local_elites_customary_chiefs"
+  - "urban_working_classes"
+  - "urban_middle_classes"
+  - "rural_working_classes"
+  - "rural_middle_classes"
+  - "regional_groups_separatists"
+  - "women"
+  - "other"
+evidence_regimes: [observed, inferred]
+required_sources:
+  - "base sociale documentée : enquêtes électorales, presse, travaux académiques"
+  - "discours d'appel aux groupes (déclaré) comme indice secondaire"
+inclusion_criteria:
+  - "Le noyau des membres et soutiens (core), pas l'électorat occasionnel."
+  - "Maximum trois labels ; un seul si un seul groupe domine."
+exclusion_criteria:
+  - "Groupes simplement mentionnés dans le programme sans base de soutien réelle."
+adherence_passed: false

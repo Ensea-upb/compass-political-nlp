@@ -1,0 +1,35 @@
+# Transcrit du codebook V-Party v2, §3.2.4 — type C, la variable interprétative
+# centrale du pilote (engagement envers le pluralisme).
+variable_id: v2paplur
+question: >
+  Prior to this election, to what extent was the leadership of this political
+  party clearly committed to free and fair elections with multiple parties,
+  freedom of speech, media, assembly and association?
+definition: >
+  No commitment: leaders openly support an autocratic form of government
+  without elections or freedom of speech, assembly and association (e.g.
+  theocracy, single-party rule, revolutionary regime). Full commitment:
+  leaders unambiguously support freedom of speech, media, assembly and
+  association and pledge to accept defeat in free and fair elections.
+scale:
+  0: "Not at all committed."
+  1: "Not committed."
+  2: "Weakly committed."
+  3: "Committed."
+  4: "Fully committed."
+method: llm_guided
+output_type: ordinal
+evidence_regimes: [declared, observed]
+required_sources:
+  - "manifeste et discours (déclaré)"
+  - "presse indépendante, rapports d'observation électorale (observé : intimidations, acceptation des résultats)"
+inclusion_criteria:
+  - "AVANT l'élection codée (prior to this election) — contrôle temporel strict."
+  - "Examiner déclarations ET comportements ; chercher preuves favorables ET contradictoires."
+exclusion_criteria:
+  - "Comportements postérieurs à l'élection -> hors périmètre de ce codage."
+ambiguous_cases:
+  - "Programme pro-pluraliste + discours délégitimant l'opposition : exposer la contradiction, pondérer l'observé."
+decision_rules:
+  - "Le comportement documenté prime sur la déclaration en cas de contradiction franche."
+adherence_passed: false

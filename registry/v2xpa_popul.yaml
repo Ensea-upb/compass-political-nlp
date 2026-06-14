@@ -1,0 +1,26 @@
+# Transcrit du codebook V-Party v2, §2.2 — type D (indice dérivé).
+# Formule officielle : moyenne harmonique des distributions postérieures
+# rescalées de v2paanteli_osp et v2papeople_osp.
+# LIMITE DOCUMENTÉE (audit, nuance 1) : au pilote, la formule est appliquée aux
+# estimations ponctuelles produites par COMPASS (compass_scores), pas aux
+# distributions postérieures — la propagation d'incertitude vient à l'étape 9.
+variable_id: v2xpa_popul
+question: >
+  To what extent do representatives of the party use populist rhetoric
+  (narrowly defined)?
+definition: >
+  Index computed as the harmonic mean of rescaled v2paanteli and v2papeople:
+  populism (narrow) = anti-elitism combined with people-centrism.
+  Scale: interval, from low to high (0-1).
+scale:
+  interval: "0 (faible) à 1 (fort)"
+method: deterministic_rule
+output_type: derived_distribution
+evidence_regimes: [inferred]
+required_sources:
+  - "compass_scores : v2paanteli et v2papeople produits par le système (JAMAIS l'étalon V-Party)"
+inclusion_criteria:
+  - "Calculable uniquement si v2paanteli ET v2papeople ont été produits pour ce cas."
+decision_rules:
+  - "2.0 / (1.0/(v2paanteli/4.0) + 1.0/(v2papeople/4.0))"
+adherence_passed: false

@@ -1,0 +1,32 @@
+# Transcrit du codebook V-Party v2, §3.2.1 — type C (expert), échelle ordinale 0-4.
+variable_id: v2paanteli
+question: "How important is anti-elite rhetoric for this party?"
+definition: >
+  Elites are relatively small groups that have a greater say in society than
+  others, for instance due to their political power, wealth or societal
+  standing. The specific groups considered to be the elite may vary by country
+  and even from party to party within the same country, as do the terms used
+  to describe them. In some cases, "elites" can also refer to an international
+  elite.
+scale:
+  0: "Not at all important. The leadership never makes statements against the elite."
+  1: "Not important. The leadership rarely makes statements against the elite."
+  2: "Somewhat important. The leadership sometimes makes statements against the elite."
+  3: "Important. The leadership often makes statements against the elite."
+  4: "Very important. The leadership makes statements against the elite whenever possible."
+method: llm_guided
+output_type: ordinal
+evidence_regimes: [declared]
+required_sources:
+  - "discours du dirigeant et de la direction du parti"
+  - "manifeste, communiqués, meetings de campagne"
+inclusion_criteria:
+  - "Déclarations de la DIRECTION du parti (leadership), pas des militants."
+  - "L'élite peut être nationale ou internationale (FMI, anciennes puissances coloniales...)."
+exclusion_criteria:
+  - "Critique d'un adversaire précis sans cadrage anti-élite -> CT4, pas v2paanteli."
+ambiguous_cases:
+  - "Rhétorique anti-corruption : anti-élite seulement si les élites sont visées comme groupe."
+decision_rules:
+  - "Fréquence et systématicité des déclarations anti-élite, pas leur intensité émotionnelle."
+adherence_passed: false

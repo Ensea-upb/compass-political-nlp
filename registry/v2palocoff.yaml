@@ -1,0 +1,27 @@
+# Transcrit du codebook V-Party v2, §3.3.3 — type C, organisation locale.
+variable_id: v2palocoff
+question: >
+  Does this party maintain permanent offices that operate outside of election
+  campaigns at the local or municipal-level?
+definition: >
+  "Local or municipal" = low-level administrative divisions ranked below
+  regions, provinces or states. Offices that ensure professional personnel and
+  continued interaction of the party with citizens, operating OUTSIDE of
+  election campaigns.
+scale:
+  0: "The party does not have permanent local offices."
+  1: "Permanent local offices in few municipalities."
+  2: "Permanent local offices in some municipalities."
+  3: "Permanent local offices in most municipalities."
+  4: "Permanent local offices in all or almost all municipalities."
+method: llm_guided
+output_type: ordinal
+evidence_regimes: [observed]
+required_sources:
+  - "statuts du parti, site officiel, presse locale, travaux académiques sur l'implantation"
+inclusion_criteria:
+  - "Bureaux PERMANENTS (hors campagne), niveau local/municipal uniquement."
+exclusion_criteria:
+  - "Permanences de campagne temporaires -> ne comptent pas."
+  - "Bureaux régionaux/provinciaux -> niveau supérieur, hors périmètre."
+adherence_passed: false
