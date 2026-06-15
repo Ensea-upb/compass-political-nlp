@@ -66,6 +66,42 @@ python examples/run_manifesto_pdf_ingestion.py \
 
 If `pdf_url` is provided in the CSV, the script downloads it directly. If it is empty, the script resolves the URL through the Manifesto API metadata endpoint.
 
+
+## 3. Build the CSV automatically
+
+For a quick validated batch, start from:
+
+```bash
+python examples/run_manifesto_pdf_ingestion.py \
+  --manifest examples/manifesto_manifest_deu_2009.csv \
+  --translation en
+```
+
+To generate a manifest from the Manifesto core dataset:
+
+```bash
+python scripts/build_manifesto_manifest.py \
+  --core-version MPDS2024a \
+  --metadata-version 2024-1 \
+  --country-iso3 DEU \
+  --country-code 41 \
+  --election-date 200909 \
+  --language de \
+  --output data/manifests/deu_2009.csv
+```
+
+You can also start from a local core CSV:
+
+```bash
+python scripts/build_manifesto_manifest.py \
+  --core-csv data/mp_core.csv \
+  --metadata-version 2024-1 \
+  --country-iso3 DEU \
+  --country-code 41 \
+  --election-date 200909 \
+  --language de \
+  --output data/manifests/deu_2009.csv
+```
 ## 4. PDF blocked: automatic text fallback
 
 Some original document URLs such as `/down/originals/...pdf` can return HTTP 403 even when the metadata API accepts your key. In that case the script continues automatically with `texts_and_annotations` unless `--no-text-fallback` is passed.

@@ -7,6 +7,9 @@ never stores credentials in code or generated outputs.
 
 from __future__ import annotations
 
+import base64
+import csv
+import io
 import json
 import os
 import urllib.error
@@ -54,6 +57,15 @@ class ManifestoAPI:
         self.api_key = api_key if api_key is not None else os.getenv("MANIFESTO_API_KEY")
         self.api_root = api_root.rstrip("/")
 
+    def get_core_records(self, version: str) -> list[dict[str, Any]]:
+        """Return Manifesto core dataset rows when the API exposes JSON or CSV content."""
+        payload = self._request_json("get_core", params=[("key", version)])
+        records = _coerce_items(payload)
+        if records and _looks_like_core_rows(records):
+            return records
+        if isinstance(payload, dict) and isinstance(payload.get("content"), str):
+            return _records_from_base64_content(payload["content"])
+        return records
     def metadata(self, keys: list[str], version: str | None = None) -> list[dict[str, Any]]:
         """Return corpus metadata for Manifesto keys such as ``41320_200909``."""
         if not keys:
@@ -192,6 +204,7 @@ def _append_query_param(url: str, key: str, value: str) -> str:
     query.append((key, value))
     return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
 
+
 def normalize_manifesto_url(url: str) -> str:
     """Normalize relative Manifesto URLs into absolute URLs."""
     if url.startswith("http://") or url.startswith("https://"):
@@ -256,6 +269,26 @@ def _collect_text_chunks(value: Any) -> list[str]:
                 chunks.extend(_collect_text_chunks(child))
         return chunks
     return []
+
+def _looks_like_core_rows(records: list[dict[str, Any]]) -> bool:
+    if not records:
+        return False
+    keys = {str(key).lower() for key in records[0]}
+    return "party" in keys and "date" in keys
+
+
+def _records_from_base64_content(content: str) -> list[dict[str, Any]]:
+    raw = base64.b64decode(content)
+    text = raw.decode("utf-8-sig", errors="ignore")
+    if "party" not in text[:2000].lower() or "date" not in text[:2000].lower():
+        return []
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    return list(csv.DictReader(io.StringIO(text), dialect=dialect))
+
 
 def _coerce_items(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
