@@ -1,0 +1,4 @@
+# COMPASS optional chat UI
+# Install after requirements-full.txt or requirements-onyxia.txt.
+
+gradio>=4.44
