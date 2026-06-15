@@ -39,6 +39,7 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--core-version", help="Manifesto core dataset version, for example MPDS2024a")
     source.add_argument("--core-csv", type=Path, help="Local Manifesto core CSV already downloaded")
+    parser.add_argument("--core-kind", default="xlsx", help="API get_core kind, usually xlsx or dta")
     parser.add_argument("--metadata-version", required=True, help="Corpus metadata version, for example 2024-1")
     parser.add_argument("--country-iso3", required=True, help="Output country ISO3, for example DEU")
     parser.add_argument("--country-code", help="Filter core country code, for example 41")
@@ -47,9 +48,12 @@ def main() -> None:
     parser.add_argument("--language", default="und")
     parser.add_argument("--election-id", help="Override output election_id; default ISO3_year")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--inspect", action="store_true", help="Print loaded core columns and sample filter values")
     args = parser.parse_args()
 
     records = _load_records(args)
+    if args.inspect:
+        inspect_records(records)
     rows = build_manifest_rows(
         records,
         metadata_version=args.metadata_version,
@@ -72,7 +76,7 @@ def _load_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.core_csv:
         with args.core_csv.open(newline="", encoding="utf-8-sig") as fh:
             return list(csv.DictReader(fh))
-    return ManifestoAPI().get_core_records(args.core_version)
+    return ManifestoAPI().get_core_records(args.core_version, kind=args.core_kind)
 
 
 def build_manifest_rows(
@@ -89,14 +93,14 @@ def build_manifest_rows(
     rows: list[dict[str, str]] = []
     for record in records:
         normalized = {str(key).lower(): value for key, value in record.items()}
-        party = _clean(normalized.get("party"))
-        mp_date = _clean(normalized.get("date"))
-        country = _clean(normalized.get("country"))
+        party = _clean(_first_value(normalized, "party", "party_id"))
+        mp_date = _clean(_first_value(normalized, "date", "edate", "election_date"))
+        country = _clean(_first_value(normalized, "country", "country_id", "countrycode"))
         if not party or not mp_date:
             continue
         if country_code and country != str(country_code):
             continue
-        if election_date and mp_date != str(election_date):
+        if election_date and _digits(mp_date) != _digits(str(election_date)):
             continue
         if parties and party not in parties:
             continue
@@ -119,6 +123,34 @@ def build_manifest_rows(
     rows.sort(key=lambda row: (row["election_id"], row["party_id"], row["key"]))
     return rows
 
+
+def inspect_records(records: list[dict[str, Any]], limit: int = 5) -> None:
+    print(f"Loaded core records: {len(records)}")
+    if not records:
+        return
+    columns = list(records[0].keys())
+    print("Columns: " + ", ".join(str(col) for col in columns[:40]))
+    print("Sample rows:")
+    for record in records[:limit]:
+        normalized = {str(key).lower(): value for key, value in record.items()}
+        print(
+            "  country={country} party={party} date={date}".format(
+                country=_clean(_first_value(normalized, "country", "country_id", "countrycode")),
+                party=_clean(_first_value(normalized, "party", "party_id")),
+                date=_clean(_first_value(normalized, "date", "edate", "election_date")),
+            )
+        )
+
+
+def _first_value(mapping: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _digits(value: str) -> str:
+    return "".join(ch for ch in value if ch.isdigit())
 
 def doc_date_from_manifesto_date(value: str) -> date:
     digits = "".join(ch for ch in value if ch.isdigit())

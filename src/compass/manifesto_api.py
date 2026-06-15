@@ -57,15 +57,16 @@ class ManifestoAPI:
         self.api_key = api_key if api_key is not None else os.getenv("MANIFESTO_API_KEY")
         self.api_root = api_root.rstrip("/")
 
-    def get_core_records(self, version: str) -> list[dict[str, Any]]:
-        """Return Manifesto core dataset rows when the API exposes JSON or CSV content."""
-        payload = self._request_json("get_core", params=[("key", version)])
+    def get_core_records(self, version: str, kind: str = "xlsx") -> list[dict[str, Any]]:
+        """Return Manifesto core dataset rows from JSON, CSV, XLSX or Stata payloads."""
+        payload = self._request_json("get_core", params=[("key", version), ("kind", kind)])
         records = _coerce_items(payload)
         if records and _looks_like_core_rows(records):
             return records
         if isinstance(payload, dict) and isinstance(payload.get("content"), str):
-            return _records_from_base64_content(payload["content"])
+            return _records_from_base64_content(payload["content"], kind=kind)
         return records
+
     def metadata(self, keys: list[str], version: str | None = None) -> list[dict[str, Any]]:
         """Return corpus metadata for Manifesto keys such as ``41320_200909``."""
         if not keys:
@@ -277,10 +278,20 @@ def _looks_like_core_rows(records: list[dict[str, Any]]) -> bool:
     return "party" in keys and "date" in keys
 
 
-def _records_from_base64_content(content: str) -> list[dict[str, Any]]:
+def _records_from_base64_content(content: str, kind: str = "") -> list[dict[str, Any]]:
     raw = base64.b64decode(content)
+    text_records = _records_from_text_payload(raw)
+    if text_records:
+        return text_records
+    table_records = _records_from_binary_table(raw, kind=kind)
+    if table_records:
+        return table_records
+    return []
+
+
+def _records_from_text_payload(raw: bytes) -> list[dict[str, Any]]:
     text = raw.decode("utf-8-sig", errors="ignore")
-    if "party" not in text[:2000].lower() or "date" not in text[:2000].lower():
+    if "party" not in text[:4000].lower() or "date" not in text[:4000].lower():
         return []
     sample = text[:4096]
     try:
@@ -288,6 +299,26 @@ def _records_from_base64_content(content: str) -> list[dict[str, Any]]:
     except csv.Error:
         dialect = csv.excel
     return list(csv.DictReader(io.StringIO(text), dialect=dialect))
+
+
+def _records_from_binary_table(raw: bytes, kind: str = "") -> list[dict[str, Any]]:
+    try:
+        import pandas as pd
+    except ImportError:
+        return []
+    bio = io.BytesIO(raw)
+    try:
+        if kind.lower() in {"dta", "stata"}:
+            frame = pd.read_stata(bio)
+        else:
+            frame = pd.read_excel(bio)
+    except Exception:
+        bio.seek(0)
+        try:
+            frame = pd.read_stata(bio)
+        except Exception:
+            return []
+    return frame.fillna("").astype(str).to_dict(orient="records")
 
 
 def _coerce_items(payload: Any) -> list[dict[str, Any]]:
