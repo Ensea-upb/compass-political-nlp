@@ -59,13 +59,18 @@ class ManifestoAPI:
 
     def get_core_records(self, version: str, kind: str = "xlsx") -> list[dict[str, Any]]:
         """Return Manifesto core dataset rows from JSON, CSV, XLSX or Stata payloads."""
-        payload = self._request_json("get_core", params=[("key", version), ("kind", kind)])
-        records = _coerce_items(payload)
-        if records and _looks_like_core_rows(records):
-            return records
-        if isinstance(payload, dict) and isinstance(payload.get("content"), str):
-            return _records_from_base64_content(payload["content"], kind=kind)
-        return records
+        tried: list[str] = []
+        for candidate_kind in _core_kind_candidates(kind):
+            tried.append(candidate_kind)
+            payload = self._request_json(
+                "get_core",
+                params=[("key", version), ("kind", candidate_kind)],
+                method="GET",
+            )
+            records = _records_from_core_payload(payload, kind=candidate_kind)
+            if records:
+                return records
+        return []
 
     def metadata(self, keys: list[str], version: str | None = None) -> list[dict[str, Any]]:
         """Return corpus metadata for Manifesto keys such as ``41320_200909``."""
@@ -167,15 +172,18 @@ class ManifestoAPI:
         with urllib.request.urlopen(req, timeout=120) as response:
             return response.read()
 
-    def _request_json(self, endpoint: str, params: list[tuple[str, str]]) -> Any:
+    def _request_json(self, endpoint: str, params: list[tuple[str, str]], method: str = "POST") -> Any:
         url = f"{self.api_root}/{endpoint.lstrip('/')}"
         data = urllib.parse.urlencode(params).encode("utf-8")
+        if method.upper() == "GET" and params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+            data = None
         req = urllib.request.Request(
             url,
             data=data,
-            method="POST",
+            method=method.upper(),
             headers={
-                "Content-Type": "application/x-www-form-urlencoded",
+                **({"Content-Type": "application/x-www-form-urlencoded"} if data is not None else {}),
                 "Accept": "application/json",
                 "User-Agent": "compass-political-nlp/0.1",
                 **self._auth_headers(),
@@ -269,6 +277,23 @@ def _collect_text_chunks(value: Any) -> list[str]:
             elif isinstance(child, (dict, list)):
                 chunks.extend(_collect_text_chunks(child))
         return chunks
+    return []
+
+def _core_kind_candidates(kind: str) -> list[str]:
+    preferred = kind or "xlsx"
+    candidates = [preferred]
+    for fallback in ("dta", "xlsx"):
+        if fallback not in candidates:
+            candidates.append(fallback)
+    return candidates
+
+
+def _records_from_core_payload(payload: Any, kind: str) -> list[dict[str, Any]]:
+    records = _coerce_items(payload)
+    if records and _looks_like_core_rows(records):
+        return records
+    if isinstance(payload, dict) and isinstance(payload.get("content"), str):
+        return _records_from_base64_content(payload["content"], kind=kind)
     return []
 
 def _looks_like_core_rows(records: list[dict[str, Any]]) -> bool:

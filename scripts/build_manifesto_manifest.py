@@ -39,7 +39,7 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--core-version", help="Manifesto core dataset version, for example MPDS2024a")
     source.add_argument("--core-csv", type=Path, help="Local Manifesto core CSV already downloaded")
-    parser.add_argument("--core-kind", default="xlsx", help="API get_core kind, usually xlsx or dta")
+    parser.add_argument("--core-kind", default="dta", help="API get_core kind, usually dta or xlsx")
     parser.add_argument("--metadata-version", required=True, help="Corpus metadata version, for example 2024-1")
     parser.add_argument("--country-iso3", required=True, help="Output country ISO3, for example DEU")
     parser.add_argument("--country-code", help="Filter core country code, for example 41")
@@ -70,6 +70,8 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     print(f"Wrote {len(rows)} rows to {args.output}")
+    if not rows:
+        print("No rows matched. Re-run with --inspect and check country/date values, or try --core-kind dta.")
 
 
 def _load_records(args: argparse.Namespace) -> list[dict[str, Any]]:
