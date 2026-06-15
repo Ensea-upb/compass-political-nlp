@@ -134,7 +134,7 @@ export COMPASS_HYDE_ENABLED=false
 export COMPASS_HYDE_MODEL=Qwen/Qwen2.5-3B-Instruct
 export COMPASS_HF_DEVICE=cpu
 
-python examples/run_real_architecture.py full --reset
+python examples/run_real_architecture.py full --reset --variables v2paplur
 ```
 
 Override judge models with a comma-separated list only for the research profile:

@@ -135,7 +135,7 @@ def run_smoke() -> None:
         print("Full-mode dependency import check: passed")
 
 
-def run_full(reset: bool) -> None:
+def run_full(reset: bool, variables: list[str] | None = None) -> None:
     _configure_full_environment(reset=reset)
 
     from compass.config import settings
@@ -226,7 +226,8 @@ def run_full(reset: bool) -> None:
         election_id="CIV_2020_LEG",
         election_date=date(2020, 10, 31),
     )
-    answers = runner.run_case(case, ["v2pavote"])
+    selected_variables = variables or ["v2pavote"]
+    answers = runner.run_case(case, selected_variables)
     print("Full status: completed")
     for answer in answers:
         print(
@@ -274,12 +275,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["smoke", "full"], help="Example execution mode")
     parser.add_argument("--reset", action="store_true", help="Delete generated demo data before full run")
+    parser.add_argument(
+        "--variables",
+        default="v2pavote",
+        help="Comma-separated variable IDs to run in full mode, for example v2paplur or v2pavote,v2paplur",
+    )
     args = parser.parse_args()
 
     if args.mode == "smoke":
         run_smoke()
     else:
-        run_full(reset=args.reset)
+        variables = [item.strip() for item in args.variables.split(",") if item.strip()]
+        run_full(reset=args.reset, variables=variables)
 
 
 if __name__ == "__main__":
