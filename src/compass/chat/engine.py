@@ -92,6 +92,7 @@ class ChatEngine:
             )
             if not answer:
                 raise RuntimeError("Empty LLM response")
+            answer = strip_appended_sources(answer)
             return ChatResponse(
                 answer=answer,
                 citations=citations,
@@ -138,18 +139,51 @@ def build_messages(question: str, citations: list[Citation], request: ChatReques
         f"{citation.text}"
         for citation in citations
     )
+    language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
-        "Answer only from the provided COMPASS evidence. Cite sources with [S1], [S2], etc. "
-        "If the evidence is insufficient, say so clearly. Keep the answer concise and analytical."
+        "Answer only from the provided COMPASS evidence. Cite sources inline with [S1], [S2], etc. "
+        "Do not add a separate bibliography or sources section; the interface adds sources separately. "
+        "If the evidence is insufficient, say so clearly. Keep the answer concise and analytical. "
+        f"Answer in {language}."
     )
     scope = f"as_of={request.as_of.isoformat()}"
     if request.party_id:
         scope += f", party_id={request.party_id}"
     user = f"Scope: {scope}\n\nQuestion: {question}\n\nCOMPASS evidence:\n{context}"
-    history = [msg for msg in request.history[-6:] if msg.get("role") in {"user", "assistant"}]
+    history = compact_history(request.history)
     return [{"role": "system", "content": system}, *history, {"role": "user", "content": user}]
 
+
+def infer_answer_language(question: str) -> str:
+    lowered = question.lower()
+    french_markers = ("français", "francais", "réponds en français", "reponds en francais", "en français", "en francais")
+    if any(marker in lowered for marker in french_markers):
+        return "French"
+    return "the user's language"
+
+
+def compact_history(history: list[dict[str, str]], max_messages: int = 4, max_chars: int = 700) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for msg in history[-max_messages:]:
+        role = msg.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        content = strip_appended_sources(msg.get("content", ""))
+        if len(content) > max_chars:
+            content = content[:max_chars].rstrip() + "..."
+        compacted.append({"role": role, "content": content})
+    return compacted
+
+
+def strip_appended_sources(answer: str) -> str:
+    markers = ("\nSources\n", "\n### Sources\n", "\n## Sources\n")
+    stripped = answer.strip()
+    for marker in markers:
+        idx = stripped.find(marker)
+        if idx != -1:
+            return stripped[:idx].strip()
+    return stripped
 
 def build_extractive_answer(question: str, citations: list[Citation], exc: Exception) -> str:
     lines = [

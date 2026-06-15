@@ -2,7 +2,7 @@ from datetime import date
 
 import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
-from compass.chat.engine import build_citations, format_citations
+from compass.chat.engine import build_citations, compact_history, format_citations, infer_answer_language, strip_appended_sources
 
 
 class FakeMemory:
@@ -82,3 +82,24 @@ def test_gradio_answer_message_handles_greeting():
     answer = _answer_message("salut", [], engine=None, cutoff=date(2009, 9, 27), party_id=None, k=8)
 
     assert "Bonjour" in answer
+
+def test_chat_prompt_respects_requested_french():
+    assert infer_answer_language("réponds en français") == "French"
+
+
+def test_strip_appended_sources_removes_model_bibliography():
+    answer = "Analysis [S1].\n\nSources\n- [S1] duplicated"
+
+    assert strip_appended_sources(answer) == "Analysis [S1]."
+
+
+def test_compact_history_trims_sources_and_long_answers():
+    history = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "A" * 900 + "\n\nSources\n- many"},
+    ]
+
+    compacted = compact_history(history, max_chars=80)
+
+    assert len(compacted[-1]["content"]) <= 83
+    assert "Sources" not in compacted[-1]["content"]
