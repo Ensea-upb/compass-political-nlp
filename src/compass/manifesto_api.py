@@ -12,6 +12,7 @@ import csv
 import io
 import json
 import os
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -345,22 +346,64 @@ def _records_from_text_payload(raw: bytes) -> list[dict[str, Any]]:
 
 def _records_from_binary_table(raw: bytes, kind: str = "") -> list[dict[str, Any]]:
     try:
-        import pandas as pd
-    except ImportError:
-        return []
-    bio = io.BytesIO(raw)
-    try:
-        if kind.lower() in {"dta", "stata"}:
-            frame = pd.read_stata(bio)
-        else:
-            frame = pd.read_excel(bio)
+        frame = _read_binary_table(raw, kind=kind)
     except Exception:
-        bio.seek(0)
-        try:
-            frame = pd.read_stata(bio)
-        except Exception:
-            return []
+        return []
     return frame.fillna("").astype(str).to_dict(orient="records")
+
+
+def _read_binary_table(raw: bytes, kind: str = ""):
+    import pandas as pd
+
+    readers = []
+    if kind.lower() in {"dta", "stata"}:
+        readers.extend(("stata", "excel"))
+    elif kind.lower() in {"xlsx", "xls", "excel"}:
+        readers.extend(("excel", "stata"))
+    else:
+        readers.extend(("stata", "excel"))
+
+    errors: list[str] = []
+    for reader in readers:
+        bio = io.BytesIO(raw)
+        try:
+            if reader == "stata":
+                return pd.read_stata(bio, convert_categoricals=False)
+            return pd.read_excel(bio)
+        except Exception as exc:
+            errors.append(f"{reader}: {exc}")
+
+    suffix = ".dta" if kind.lower() in {"dta", "stata"} else ".xlsx"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as fh:
+        fh.write(raw)
+        fh.flush()
+        for reader in readers:
+            try:
+                if reader == "stata":
+                    return pd.read_stata(fh.name, convert_categoricals=False)
+                return pd.read_excel(fh.name)
+            except Exception as exc:
+                errors.append(f"{reader}/file: {exc}")
+    raise ManifestoAPIError("Could not decode Manifesto core payload: " + " | ".join(errors))
+
+
+def debug_core_decoding(content: str, kind: str = "") -> dict[str, Any]:
+    raw = base64.b64decode(content)
+    summary: dict[str, Any] = {"decoded_bytes": len(raw), "kind": kind}
+    try:
+        frame = _read_binary_table(raw, kind=kind)
+        summary["read_ok"] = True
+        summary["rows"] = int(len(frame))
+        summary["columns"] = [str(col) for col in list(frame.columns)[:60]]
+        if len(frame):
+            preview_cols = [col for col in frame.columns if str(col).lower() in {"country", "party", "date", "edate"}]
+            summary["first_row_core_fields"] = {
+                str(col): str(frame.iloc[0][col]) for col in preview_cols
+            }
+    except Exception as exc:
+        summary["read_ok"] = False
+        summary["error"] = str(exc)
+    return summary
 
 
 def _coerce_items(payload: Any) -> list[dict[str, Any]]:

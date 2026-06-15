@@ -43,3 +43,4 @@ def test_summarize_payload_redacts_core_content():
     assert summary["content_length"] == 120
     assert summary["content_prefix"] == ("abcdef" * 20)[:80]
     assert "content" not in summary
+    assert "decoding" in summary

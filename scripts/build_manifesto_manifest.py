@@ -19,7 +19,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from compass.manifesto_api import ManifestoAPI
+from compass.manifesto_api import ManifestoAPI, debug_core_decoding
 
 HEADER = [
     "key",
@@ -107,6 +107,7 @@ def summarize_payload(payload: Any) -> dict[str, Any]:
             content = payload["content"]
             summary["content_length"] = len(content)
             summary["content_prefix"] = content[:80]
+            summary["decoding"] = debug_core_decoding(content, kind="")
         for key in ("error", "message", "status", "kind", "file", "filename"):
             if key in payload:
                 summary[key] = payload[key]
