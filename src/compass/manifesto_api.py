@@ -315,7 +315,11 @@ def _records_from_base64_content(content: str, kind: str = "") -> list[dict[str,
 
 
 def _records_from_text_payload(raw: bytes) -> list[dict[str, Any]]:
+    if b"\x00" in raw[:4096]:
+        return []
     text = raw.decode("utf-8-sig", errors="ignore")
+    if "\r" in text:
+        return []
     if "party" not in text[:4000].lower() or "date" not in text[:4000].lower():
         return []
     sample = text[:4096]
@@ -323,7 +327,13 @@ def _records_from_text_payload(raw: bytes) -> list[dict[str, Any]]:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
     except csv.Error:
         dialect = csv.excel
-    return list(csv.DictReader(io.StringIO(text), dialect=dialect))
+    try:
+        rows = list(csv.DictReader(io.StringIO(text, newline=""), dialect=dialect))
+    except csv.Error:
+        return []
+    if not rows or not _looks_like_core_rows(rows):
+        return []
+    return rows
 
 
 def _records_from_binary_table(raw: bytes, kind: str = "") -> list[dict[str, Any]]:

@@ -1,4 +1,4 @@
-from compass.manifesto_api import _append_query_param, extract_manifesto_text, find_pdf_url, normalize_manifesto_url
+from compass.manifesto_api import _append_query_param, _records_from_text_payload, extract_manifesto_text, find_pdf_url, normalize_manifesto_url
 
 
 def test_find_pdf_url_prefers_explicit_field():
@@ -31,3 +31,8 @@ def test_extract_manifesto_text_from_annotations():
     payload = {"items": [{"sentence": "First sentence."}, {"text": "Second sentence."}]}
 
     assert extract_manifesto_text(payload) == "First sentence.\nSecond sentence."
+
+def test_records_from_text_payload_returns_empty_on_malformed_csv():
+    raw = b"party,date\r\n41320,200909\r\nmalformed\rline,still_bad"
+
+    assert _records_from_text_payload(raw) == []
