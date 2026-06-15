@@ -42,39 +42,56 @@ def main() -> None:
     cutoff = date.fromisoformat(args.as_of)
 
     def respond(message: str, history):
-        try:
-            if _is_greeting(message):
-                return (
-                    "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé, "
-                    "par exemple : What does the party say about democracy?"
-                )
-            request = ChatRequest(
-                question=message,
-                as_of=cutoff,
-                party_id=args.party,
-                k=args.k,
-                history=_normalize_history(history),
-            )
-            response = engine.ask(request)
-            answer = response.answer + "\n\n### Sources\n" + format_citations(response.citations)
-            return answer
-        except Exception as exc:
-            return (
-                "Erreur COMPASS Chat : "
-                f"{type(exc).__name__}: {exc}\n\n"
-                "Vérifie que le corpus a été ingéré, que COMPASS_CHROMA_DIR pointe vers le bon dossier, "
-                "et que le pays/parti/date existent dans l'index."
-            )
+        history = history or []
+        answer = _answer_message(
+            message=message,
+            history=history,
+            engine=engine,
+            cutoff=cutoff,
+            party_id=args.party,
+            k=args.k,
+        )
+        history.append((message, answer))
+        return history, ""
 
-    demo = gr.ChatInterface(
-        fn=respond,
-        title="COMPASS Chat",
-        description=f"Corpus: {args.country.upper()} | as_of={cutoff.isoformat()} | party={args.party or 'all'}",
-    )
+    with gr.Blocks(title="COMPASS Chat") as demo:
+        gr.Markdown("# COMPASS Chat")
+        gr.Markdown(f"Corpus: **{args.country.upper()}** | as_of={cutoff.isoformat()} | party={args.party or 'all'}")
+        chatbot = gr.Chatbot(label="COMPASS Chat")
+        message = gr.Textbox(label="Question", placeholder="What does the party say about democracy?")
+        send = gr.Button("Send")
+        message.submit(respond, inputs=[message, chatbot], outputs=[chatbot, message])
+        send.click(respond, inputs=[message, chatbot], outputs=[chatbot, message])
+
     demo.launch(server_name=args.host, server_port=args.port)
 
 
 
+
+
+def _answer_message(message: str, history, engine: ChatEngine, cutoff: date, party_id: str | None, k: int) -> str:
+    try:
+        if _is_greeting(message):
+            return (
+                "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé, "
+                "par exemple : What does the party say about democracy?"
+            )
+        request = ChatRequest(
+            question=message,
+            as_of=cutoff,
+            party_id=party_id,
+            k=k,
+            history=_normalize_history(history),
+        )
+        response = engine.ask(request)
+        return response.answer + "\n\n### Sources\n" + format_citations(response.citations)
+    except Exception as exc:
+        return (
+            "Erreur COMPASS Chat : "
+            f"{type(exc).__name__}: {exc}\n\n"
+            "Vérifie que le corpus a été ingéré, que COMPASS_CHROMA_DIR pointe vers le bon dossier, "
+            "et que le pays/parti/date existent dans l'index."
+        )
 
 def _is_greeting(message: str) -> bool:
     text = (message or "").strip().lower()

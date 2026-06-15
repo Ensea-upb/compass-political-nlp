@@ -75,3 +75,10 @@ def test_gradio_greeting_detector():
 
     assert _is_greeting("salut") is True
     assert _is_greeting("What does the party say?") is False
+
+def test_gradio_answer_message_handles_greeting():
+    from apps.chat_gradio import _answer_message
+
+    answer = _answer_message("salut", [], engine=None, cutoff=date(2009, 9, 27), party_id=None, k=8)
+
+    assert "Bonjour" in answer
