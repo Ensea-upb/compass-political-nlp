@@ -69,3 +69,9 @@ def test_gradio_history_normalizer_accepts_tuple_history():
         {"role": "assistant", "content": "hi"},
         {"role": "user", "content": "next"},
     ]
+
+def test_gradio_greeting_detector():
+    from apps.chat_gradio import _is_greeting
+
+    assert _is_greeting("salut") is True
+    assert _is_greeting("What does the party say?") is False

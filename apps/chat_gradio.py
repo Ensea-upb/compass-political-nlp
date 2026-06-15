@@ -42,16 +42,29 @@ def main() -> None:
     cutoff = date.fromisoformat(args.as_of)
 
     def respond(message: str, history):
-        request = ChatRequest(
-            question=message,
-            as_of=cutoff,
-            party_id=args.party,
-            k=args.k,
-            history=_normalize_history(history),
-        )
-        response = engine.ask(request)
-        answer = response.answer + "\n\n### Sources\n" + format_citations(response.citations)
-        return answer
+        try:
+            if _is_greeting(message):
+                return (
+                    "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé, "
+                    "par exemple : What does the party say about democracy?"
+                )
+            request = ChatRequest(
+                question=message,
+                as_of=cutoff,
+                party_id=args.party,
+                k=args.k,
+                history=_normalize_history(history),
+            )
+            response = engine.ask(request)
+            answer = response.answer + "\n\n### Sources\n" + format_citations(response.citations)
+            return answer
+        except Exception as exc:
+            return (
+                "Erreur COMPASS Chat : "
+                f"{type(exc).__name__}: {exc}\n\n"
+                "Vérifie que le corpus a été ingéré, que COMPASS_CHROMA_DIR pointe vers le bon dossier, "
+                "et que le pays/parti/date existent dans l'index."
+            )
 
     demo = gr.ChatInterface(
         fn=respond,
@@ -61,6 +74,11 @@ def main() -> None:
     demo.launch(server_name=args.host, server_port=args.port)
 
 
+
+
+def _is_greeting(message: str) -> bool:
+    text = (message or "").strip().lower()
+    return text in {"salut", "bonjour", "hello", "hi", "hey", "bonsoir"}
 
 def _normalize_history(history) -> list[dict[str, str]]:
     """Accept both old Gradio tuple history and newer message dictionaries."""
