@@ -50,6 +50,7 @@ python examples/run_real_architecture.py full --reset
 
 See `docs/09_onyxia_runbook.md` for the Onyxia step-by-step guide.
 See `docs/11_onyxia_hf_models.md` for local Hugging Face model serving with vLLM.
+See `docs/12_manifesto_pdf_ingestion.md` for automatic Manifesto Project PDF retrieval and ingestion.
 
 ## Research Pipeline
 
