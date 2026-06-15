@@ -99,8 +99,8 @@ Le registre se monte tôt parce qu'il pilote tout l'aval.
    - `v2pavote.yaml` (`method: structured_query`),
    - `v2paplur.yaml` (`method: llm_guided`),
    - une variable de classification (`method: nlp_classifier`).
-2. `VPartyRegistry().get("v2paplur")` → doit lever `AdherenceError` (la fiche n'est pas encore qualifiée) : **c'est le comportement attendu**, la gate R-1 fonctionne.
-3. `build_adherence_tests("v2paplur")` → produit permutations, paraphrases, sondes d'inclusion/exclusion. Exécution contre les juges à l'étape 7 ; le verdict se fige à la main dans le YAML (`adherence_passed: true`) — décision humaine tracée.
+2. `VPartyRegistry().get("v2paplur")` est maintenant autorisé en production : la fiche a passé R-1 et la trace est dans `docs/adherence/v2paplur_R1_report.md`. Les autres fiches restent bloquées tant qu'elles n'ont pas leur propre rapport R-1.
+3. `build_adherence_tests("v2paplur")` produit permutations, paraphrases, sondes d'inclusion/exclusion. Pour `v2paplur`, les sondes R-1 consolidées passent (7/7) et le YAML est figé à `adherence_passed: true` avec rapport versionné.
 
 ---
 
@@ -131,7 +131,7 @@ C'est le cœur ; monter dans cet ordre :
 2. **C10 par méthode** :
    - `structured` sur `v2pavote` → le score = la valeur SQL, confiance 1.0 ;
    - `deterministic` avec une formule jouet → vérifier l'échec propre (NaN + confiance 0) quand une dépendance manque ;
-   - `llm_guided` sur `v2paplur` → JSON valide, rationale citant les preuves. **Exécuter ici les tests d'adhérence de l'étape 4** et figer `adherence_passed`.
+   - `llm_guided` sur `v2paplur` → JSON valide, rationale citant les preuves. **Vérifier ici que le rapport R-1 existe pour la variable servie** ; `v2paplur` est qualifiée, les autres variables doivent encore passer leur propre gate.
 3. **C11** : panel sur le même diagnostic → ≥ 3 réponses de modèles différents. Sur 10 cas de contrôle, calculer `error_correlation` : si les corrélations hors diagonale dépassent ~0.9, le panel est redondant — diversifier (modèles, variantes) avant de continuer.
 4. **C12** : agréger ; vérifier que `(3,3,3)` et `(1,3,5)` donnent le même score mais des désaccords très différents ; `panel_alpha` sur les 10 cas de contrôle.
 

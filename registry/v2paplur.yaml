@@ -32,4 +32,4 @@ ambiguous_cases:
   - "Programme pro-pluraliste + discours délégitimant l'opposition : exposer la contradiction, pondérer l'observé."
 decision_rules:
   - "Le comportement documenté prime sur la déclaration en cas de contradiction franche."
-adherence_passed: false
+adherence_passed: true
