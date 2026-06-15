@@ -8,12 +8,15 @@ reasoning, validation, or schemas.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from compass.config import settings
 from compass.llm_client import complete_chat
+
+_SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
 
 
 @dataclass(frozen=True)
@@ -61,11 +64,51 @@ class ChatEngine:
         self.memory = memory
         self.model_name = model_name or _default_chat_model()
 
+    def _answer_segment_lookup(self, question: str, segment_ids: list[str]) -> ChatResponse:
+        texts = self.memory.fetch_by_ids(segment_ids)
+        citations = [
+            Citation(
+                ref_id=f"S{idx}",
+                segment_id=segment_id,
+                text=text,
+                doc_id=segment_id.split(":", 1)[0],
+                country_iso3="",
+                party_id=None,
+                doc_date=None,
+                doc_type=None,
+                reliability=None,
+            )
+            for idx, (segment_id, text) in enumerate(texts.items(), start=1)
+        ]
+        if not citations:
+            return ChatResponse(
+                answer="Je n'ai pas trouvé ce segment exact dans l'index COMPASS.",
+                citations=[],
+                model_used=None,
+                llm_used=False,
+                retrieval_count=0,
+            )
+        answer_lines = ["Voici le passage exact demandé dans l'index COMPASS :", ""]
+        for citation in citations:
+            answer_lines.append(f"[{citation.ref_id}] `{citation.segment_id}`")
+            answer_lines.append(citation.text)
+            answer_lines.append("")
+        return ChatResponse(
+            answer="\n".join(answer_lines).strip(),
+            citations=citations,
+            model_used=None,
+            llm_used=False,
+            retrieval_count=len(citations),
+        )
+
     def ask(self, request: ChatRequest) -> ChatResponse:
         """Answer a question using existing indexed COMPASS documents."""
         question = request.question.strip()
         if not question:
             raise ValueError("Question vide.")
+        segment_ids = extract_segment_ids(question)
+        if segment_ids:
+            return self._answer_segment_lookup(question, segment_ids)
         retrieved = self.memory.query_documents(
             question,
             as_of=request.as_of,
@@ -154,6 +197,15 @@ def build_messages(question: str, citations: list[Citation], request: ChatReques
     history = compact_history(request.history)
     return [{"role": "system", "content": system}, *history, {"role": "user", "content": user}]
 
+
+def extract_segment_ids(text: str) -> list[str]:
+    seen: set[str] = set()
+    ids: list[str] = []
+    for match in _SEGMENT_ID_RE.findall(text):
+        if match not in seen:
+            seen.add(match)
+            ids.append(match)
+    return ids
 
 def infer_answer_language(question: str) -> str:
     lowered = question.lower()

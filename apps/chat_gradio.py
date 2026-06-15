@@ -95,7 +95,8 @@ def _answer_message(message: str, history, engine: ChatEngine, cutoff: date, par
 
 def _is_greeting(message: str) -> bool:
     text = (message or "").strip().lower()
-    return text in {"salut", "bonjour", "hello", "hi", "hey", "bonsoir"}
+    greetings = ("salut", "bonjour", "hello", "hi", "hey", "bonsoir", "ça va", "ca va")
+    return len(text) <= 40 and any(text == item or text.startswith(item + " ") or text.startswith(item + ",") for item in greetings)
 
 def _normalize_history(history) -> list[dict[str, str]]:
     """Accept both old Gradio tuple history and newer message dictionaries."""

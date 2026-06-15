@@ -208,7 +208,9 @@ def answer_question(
 
 
 def is_greeting(message: str) -> bool:
-    return (message or "").strip().lower() in {"salut", "bonjour", "hello", "hi", "hey", "bonsoir"}
+    text = (message or "").strip().lower()
+    greetings = ("salut", "bonjour", "hello", "hi", "hey", "bonsoir", "ça va", "ca va")
+    return len(text) <= 40 and any(text == item or text.startswith(item + " ") or text.startswith(item + ",") for item in greetings)
 
 
 if __name__ == "__main__":

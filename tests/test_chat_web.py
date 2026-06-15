@@ -13,6 +13,7 @@ class DummyEngine:
 
 def test_chat_web_greeting():
     assert is_greeting("salut") is True
+    assert is_greeting("salut, c'est comment") is True
     assert is_greeting("What about democracy?") is False
 
 

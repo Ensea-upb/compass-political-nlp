@@ -2,7 +2,7 @@ from datetime import date
 
 import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
-from compass.chat.engine import build_citations, compact_history, format_citations, infer_answer_language, strip_appended_sources
+from compass.chat.engine import build_citations, compact_history, extract_segment_ids, format_citations, infer_answer_language, strip_appended_sources
 
 
 class FakeMemory:
@@ -103,3 +103,22 @@ def test_compact_history_trims_sources_and_long_answers():
 
     assert len(compacted[-1]["content"]) <= 83
     assert "Sources" not in compacted[-1]["content"]
+
+def test_extract_segment_ids():
+    ids = extract_segment_ids("je veux `doc1:p303c001` et doc1:p303c001")
+
+    assert ids == ["doc1:p303c001"]
+
+
+def test_chat_engine_fetches_exact_segment_id():
+    class MemoryWithFetch(FakeMemory):
+        def fetch_by_ids(self, segment_ids):
+            return {segment_ids[0]: "Exact corpus passage."}
+
+    response = ChatEngine(MemoryWithFetch()).ask(
+        ChatRequest(question="je veux le passage doc1:p303c001", as_of=date(2009, 9, 27))
+    )
+
+    assert response.llm_used is False
+    assert "Exact corpus passage" in response.answer
+    assert response.citations[0].segment_id == "doc1:p303c001"
