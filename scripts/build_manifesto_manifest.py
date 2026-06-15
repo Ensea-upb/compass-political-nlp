@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -49,7 +50,16 @@ def main() -> None:
     parser.add_argument("--election-id", help="Override output election_id; default ISO3_year")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--inspect", action="store_true", help="Print loaded core columns and sample filter values")
+    parser.add_argument("--list-core-versions", action="store_true", help="Print available Manifesto core versions and exit")
+    parser.add_argument("--debug-core-payload", action="store_true", help="Print a redacted summary of get_core payload and exit")
     args = parser.parse_args()
+
+    if args.list_core_versions:
+        print_core_versions()
+        return
+    if args.debug_core_payload:
+        debug_core_payload(args)
+        return
 
     records = _load_records(args)
     if args.inspect:
@@ -73,6 +83,37 @@ def main() -> None:
     if not rows:
         print("No rows matched. Re-run with --inspect and check country/date values, or try --core-kind dta.")
 
+
+def print_core_versions() -> None:
+    payload = ManifestoAPI().list_core_versions()
+    print(json.dumps(payload, ensure_ascii=False, indent=2)[:8000])
+
+
+def debug_core_payload(args: argparse.Namespace) -> None:
+    if not args.core_version:
+        raise SystemExit("--debug-core-payload requires --core-version.")
+    payload = ManifestoAPI().get_core_payload(args.core_version, kind=args.core_kind)
+    summary = summarize_payload(payload)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def summarize_payload(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        summary: dict[str, Any] = {
+            "type": "dict",
+            "keys": list(payload.keys()),
+        }
+        if isinstance(payload.get("content"), str):
+            content = payload["content"]
+            summary["content_length"] = len(content)
+            summary["content_prefix"] = content[:80]
+        for key in ("error", "message", "status", "kind", "file", "filename"):
+            if key in payload:
+                summary[key] = payload[key]
+        return summary
+    if isinstance(payload, list):
+        return {"type": "list", "length": len(payload), "first_item": payload[0] if payload else None}
+    return {"type": type(payload).__name__, "preview": str(payload)[:1000]}
 
 def _load_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.core_csv:

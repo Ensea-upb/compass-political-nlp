@@ -57,6 +57,13 @@ class ManifestoAPI:
         self.api_key = api_key if api_key is not None else os.getenv("MANIFESTO_API_KEY")
         self.api_root = api_root.rstrip("/")
 
+    def list_core_versions(self) -> Any:
+        """Return available Manifesto core dataset versions."""
+        return self._request_json("list_core_versions", params=[], method="GET")
+
+    def get_core_payload(self, version: str, kind: str = "dta") -> Any:
+        """Return raw get_core API payload for debugging schema/format issues."""
+        return self._request_json("get_core", params=[("key", version), ("kind", kind)], method="GET")
     def get_core_records(self, version: str, kind: str = "xlsx") -> list[dict[str, Any]]:
         """Return Manifesto core dataset rows from JSON, CSV, XLSX or Stata payloads."""
         tried: list[str] = []

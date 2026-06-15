@@ -1,6 +1,6 @@
 from datetime import date
 
-from scripts.build_manifesto_manifest import build_manifest_rows, doc_date_from_manifesto_date
+from scripts.build_manifesto_manifest import build_manifest_rows, doc_date_from_manifesto_date, summarize_payload
 
 
 def test_doc_date_from_manifesto_date_month():
@@ -36,3 +36,10 @@ def test_build_manifest_rows_filters_country_and_election():
             "pdf_url": "",
         }
     ]
+
+def test_summarize_payload_redacts_core_content():
+    summary = summarize_payload({"content": "abcdef" * 20, "filename": "core.dta"})
+
+    assert summary["content_length"] == 120
+    assert summary["content_prefix"] == ("abcdef" * 20)[:80]
+    assert "content" not in summary
