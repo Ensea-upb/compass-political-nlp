@@ -1,4 +1,4 @@
-﻿"""LLM client abstraction for COMPASS.
+"""LLM client abstraction for COMPASS.
 
 Local mode talks directly to an OpenAI-compatible endpoint such as vLLM. API
 mode keeps LiteLLM as the multi-provider adapter.
@@ -72,12 +72,36 @@ def _complete_openai_compatible(
         kwargs["response_format"] = response_format
     try:
         resp = client.chat.completions.create(**kwargs)
-    except Exception:
-        if response_format is None:
-            raise
-        kwargs.pop("response_format", None)
-        resp = client.chat.completions.create(**kwargs)
-    return (resp.choices[0].message.content or "").strip()
+        return (resp.choices[0].message.content or "").strip()
+    except Exception as first_exc:
+        if response_format is not None:
+            kwargs.pop("response_format", None)
+            try:
+                resp = client.chat.completions.create(**kwargs)
+                return (resp.choices[0].message.content or "").strip()
+            except Exception as second_exc:
+                first_exc = second_exc
+        try:
+            resp = client.completions.create(
+                model=model_name,
+                prompt=_messages_to_prompt(messages),
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return (resp.choices[0].text or "").strip()
+        except Exception as fallback_exc:
+            raise fallback_exc from first_exc
+
+
+def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
+    """Best-effort text prompt for OpenAI-compatible completions fallback."""
+    lines = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        lines.append(f"{role.upper()}: {content}")
+    lines.append("ASSISTANT:")
+    return "\n\n".join(lines)
 
 
 def _complete_litellm(
