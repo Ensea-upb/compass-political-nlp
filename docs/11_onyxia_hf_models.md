@@ -6,10 +6,10 @@ API keys for the research pipeline.
 
 ## 1. Download Models
 
-Install the full dependencies:
+Install the Onyxia runtime dependencies:
 
 ```bash
-pip install -r requirements-full.txt
+pip install -r requirements-onyxia.txt
 ```
 
 Dry run:
@@ -40,6 +40,37 @@ python scripts/download_onyxia_models.py --vision
 If a model requires authentication, set `HF_TOKEN` in the environment. The
 script calls `huggingface_hub.login()` when `HF_TOKEN` is available. No token is
 stored in the repository.
+
+
+## Validated Onyxia Installation
+
+The following installation sequence was validated on an Onyxia
+`vscode-tensorflow-gpu` service with an NVIDIA A2 16 GB GPU and a 100 Gi
+persistent volume:
+
+```bash
+cd ~/work/compass-political-nlp
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements-onyxia.txt
+```
+
+The Onyxia runtime file pins the FastAPI/Starlette/Prometheus stack used by
+vLLM. These pins avoid the server-side error:
+
+```text
+AttributeError: '_IncludedRouter' object has no attribute 'path'
+```
+
+After installation, verify the vLLM server with:
+
+```bash
+curl http://localhost:8000/v1/models
+```
+
+A successful response should list the served model, for example
+`Qwen/Qwen2.5-3B-Instruct`.
 
 ## 2. Serve With vLLM
 
@@ -133,3 +164,21 @@ python examples/run_real_architecture.py full --reset
 
 This avoids loading the NLI classifier, reranker, or embeddings on the same GPU
 that already hosts vLLM.
+
+## Troubleshooting vLLM 500 Errors
+
+If vLLM returns HTTP 500 for both `/v1/chat/completions` and `/v1/completions`,
+check the server logs. If the traceback mentions
+`prometheus_fastapi_instrumentator` and `_IncludedRouter`, reinstall the tested
+runtime pins:
+
+```bash
+pip install --force-reinstall \
+  "fastapi==0.115.14" \
+  "starlette==0.46.2" \
+  "prometheus-fastapi-instrumentator==7.1.0"
+
+pip show fastapi starlette prometheus-fastapi-instrumentator
+```
+
+Then restart vLLM completely before rerunning COMPASS.

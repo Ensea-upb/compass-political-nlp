@@ -1,0 +1,15 @@
+# COMPASS Onyxia GPU runtime
+# Install after creating/activating .venv on an Onyxia GPU service.
+# This file captures the stack validated on NVIDIA A2 16 GB with vLLM.
+
+-r requirements-full.txt
+
+# vLLM OpenAI-compatible server
+vllm==0.23.0
+
+# Compatibility pins for vLLM 0.23 on the tested Onyxia image.
+# Without these pins, requests may fail with:
+# AttributeError: '_IncludedRouter' object has no attribute 'path'
+fastapi==0.115.14
+starlette==0.46.2
+prometheus-fastapi-instrumentator==7.1.0

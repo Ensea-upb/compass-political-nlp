@@ -41,7 +41,10 @@ python examples/run_real_architecture.py smoke
 Then, on an environment with the full dependencies and model-download access:
 
 ```powershell
+# Generic full runtime:
 pip install -r requirements-full.txt
+# Onyxia GPU/vLLM runtime, use instead of requirements-full:
+pip install -r requirements-onyxia.txt
 python examples/run_real_architecture.py full --reset
 ```
 
