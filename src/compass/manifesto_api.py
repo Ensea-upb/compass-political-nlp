@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -83,24 +84,40 @@ class ManifestoAPI:
         return resolved
 
     def download_pdf(self, url: str, destination: Path) -> Path:
-        """Download a PDF or document URL to ``destination``."""
+        """Download a PDF or document URL to ``destination``.
+
+        Some Manifesto download URLs accept API keys only as ``api_key`` query
+        parameters, even when JSON API endpoints accept the ``API_KEY`` header.
+        We try the cleaner header form first, then retry with a query parameter
+        on HTTP 401/403. The credential is never returned to callers.
+        """
         destination.parent.mkdir(parents=True, exist_ok=True)
         absolute_url = normalize_manifesto_url(url)
-        req = urllib.request.Request(
-            absolute_url,
-            headers={
-                "User-Agent": "compass-political-nlp/0.1",
-                **self._auth_headers(),
-            },
-        )
         try:
-            with urllib.request.urlopen(req, timeout=120) as response:
-                data = response.read()
+            data = self._download_bytes(absolute_url)
+        except urllib.error.HTTPError as exc:  # pragma: no cover - network-dependent
+            if exc.code not in (401, 403) or not self.api_key:
+                raise ManifestoAPIError(f"Could not download PDF from {absolute_url}: {exc}") from exc
+            try:
+                data = self._download_bytes(_append_query_param(absolute_url, "api_key", self.api_key))
+            except Exception as retry_exc:
+                raise ManifestoAPIError(f"Could not download PDF from {absolute_url}: {retry_exc}") from retry_exc
         except Exception as exc:  # pragma: no cover - network-dependent
             raise ManifestoAPIError(f"Could not download PDF from {absolute_url}: {exc}") from exc
         destination.write_bytes(data)
         return destination
 
+    def _download_bytes(self, url: str) -> bytes:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "compass-political-nlp/0.1",
+                "Accept": "application/pdf,*/*",
+                **self._auth_headers(),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=120) as response:
+            return response.read()
     def _request_json(self, endpoint: str, params: list[tuple[str, str]]) -> Any:
         url = f"{self.api_root}/{endpoint.lstrip('/')}"
         data = urllib.parse.urlencode(params).encode("utf-8")
@@ -131,6 +148,13 @@ class ManifestoAPI:
             return {}
         return {"API_KEY": self.api_key}
 
+
+def _append_query_param(url: str, key: str, value: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query = [(k, v) for k, v in query if k != key]
+    query.append((key, value))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query)))
 
 def normalize_manifesto_url(url: str) -> str:
     """Normalize relative Manifesto URLs into absolute URLs."""

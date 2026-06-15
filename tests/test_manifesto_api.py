@@ -1,4 +1,4 @@
-from compass.manifesto_api import find_pdf_url, normalize_manifesto_url
+from compass.manifesto_api import _append_query_param, find_pdf_url, normalize_manifesto_url
 
 
 def test_find_pdf_url_prefers_explicit_field():
@@ -21,3 +21,8 @@ def test_find_pdf_url_scans_document_url_fields():
 
 def test_normalize_manifesto_url_keeps_absolute_url():
     assert normalize_manifesto_url("https://example.org/a.pdf") == "https://example.org/a.pdf"
+
+def test_append_query_param_replaces_existing_value():
+    url = _append_query_param("https://example.org/a.pdf?api_key=old&x=1", "api_key", "new")
+
+    assert url == "https://example.org/a.pdf?x=1&api_key=new"
