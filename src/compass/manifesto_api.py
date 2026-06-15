@@ -33,6 +33,15 @@ class ManifestoDocument:
     pdf_url: str | None
 
 
+@dataclass(frozen=True)
+class ManifestoText:
+    """Machine-readable text returned by ``texts_and_annotations``."""
+
+    key: str
+    text: str
+    payload: dict[str, Any]
+
+
 class ManifestoAPI:
     """Small stdlib client for Manifesto Project API endpoints.
 
@@ -56,6 +65,32 @@ class ManifestoAPI:
             params.append(("version", version))
         payload = self._request_json("metadata", params=params)
         return _coerce_items(payload)
+
+    def texts_and_annotations(
+        self,
+        keys: list[str],
+        *,
+        version: str | None = None,
+        translation: str | None = None,
+    ) -> list[ManifestoText]:
+        """Return machine-readable manifesto texts from the official API."""
+        if not keys:
+            return []
+        params: list[tuple[str, str]] = []
+        for key in keys:
+            params.append(("keys[]", key))
+        if version:
+            params.append(("version", version))
+        if translation:
+            params.append(("translation", translation))
+        payload = self._request_json("texts_and_annotations", params=params)
+        texts: list[ManifestoText] = []
+        for requested_key, item in zip(keys, _coerce_items(payload)):
+            key = str(item.get("manifesto_id") or item.get("key") or requested_key)
+            text = extract_manifesto_text(item)
+            if text:
+                texts.append(ManifestoText(key=key, text=text, payload=item))
+        return texts
 
     def resolve_documents(
         self,
@@ -118,6 +153,7 @@ class ManifestoAPI:
         )
         with urllib.request.urlopen(req, timeout=120) as response:
             return response.read()
+
     def _request_json(self, endpoint: str, params: list[tuple[str, str]]) -> Any:
         url = f"{self.api_root}/{endpoint.lstrip('/')}"
         data = urllib.parse.urlencode(params).encode("utf-8")
@@ -186,6 +222,40 @@ def find_pdf_url(payload: Any, preferred_field: str | None = None) -> str | None
         return normalize_manifesto_url(candidate)
     return None
 
+
+def extract_manifesto_text(payload: Any) -> str:
+    """Extract readable manifesto text from API payloads with evolving schemas."""
+    chunks = _collect_text_chunks(payload)
+    return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
+
+
+def _collect_text_chunks(value: Any) -> list[str]:
+    preferred_keys = {
+        "text",
+        "content",
+        "manifesto_text",
+        "original_text",
+        "translated_text",
+        "sentence",
+        "cmp_text",
+        "plaintext",
+    }
+    if isinstance(value, str):
+        return []
+    if isinstance(value, list):
+        chunks: list[str] = []
+        for child in value:
+            chunks.extend(_collect_text_chunks(child))
+        return chunks
+    if isinstance(value, dict):
+        chunks = []
+        for key, child in value.items():
+            if isinstance(child, str) and key.lower() in preferred_keys:
+                chunks.append(child)
+            elif isinstance(child, (dict, list)):
+                chunks.extend(_collect_text_chunks(child))
+        return chunks
+    return []
 
 def _coerce_items(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):

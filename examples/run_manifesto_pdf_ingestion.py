@@ -46,7 +46,7 @@ class ManifestoIngestionRow:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download Manifesto PDFs and ingest them into COMPASS.")
+    parser = argparse.ArgumentParser(description="Download Manifesto PDFs, then fall back to Manifesto API text if PDFs are blocked.")
     parser.add_argument("--manifest", type=Path, help="CSV manifest with key, country_iso3 and doc_date columns")
     parser.add_argument("--keys", nargs="*", help="Manifesto keys such as party_date; useful for one-off downloads")
     parser.add_argument("--metadata-version", help="Manifesto metadata version, for example 2024-1")
@@ -57,6 +57,9 @@ def main() -> None:
     parser.add_argument("--language", default="und", help="Language hint for all --keys rows")
     parser.add_argument("--pdf-field", help="Optional dotted metadata field containing the PDF URL")
     parser.add_argument("--download-dir", type=Path, default=ROOT / "data" / "manifesto_pdfs")
+    parser.add_argument("--text-dir", type=Path, default=ROOT / "data" / "manifesto_texts")
+    parser.add_argument("--translation", help="Optional texts_and_annotations translation, for example en")
+    parser.add_argument("--no-text-fallback", action="store_true", help="Fail instead of ingesting texts_and_annotations when PDF download is blocked")
     parser.add_argument("--report", type=Path, default=ROOT / "outputs" / "manifesto_pdf_ingestion_report.json")
     parser.add_argument("--dry-run", action="store_true", help="Resolve metadata and URLs without downloading or indexing")
     parser.add_argument("--print-metadata", action="store_true", help="Print raw metadata for debugging URL fields")
@@ -74,7 +77,7 @@ def main() -> None:
         raise SystemExit("No Manifesto rows to process. Use --manifest or --keys.")
 
     if args.reset and not args.dry_run:
-        _reset_generated_data(args.download_dir)
+        _reset_generated_data(args.download_dir, args.text_dir)
 
     os.environ.setdefault("COMPASS_DATA_DIR", str(ROOT / "data" / "manifesto_ingestion"))
     os.environ.setdefault("COMPASS_CHROMA_DIR", str(ROOT / "data" / "manifesto_ingestion" / "chroma"))
@@ -103,39 +106,69 @@ def main() -> None:
         try:
             metadata = _resolve_metadata(api, row, args.pdf_field)
             pdf_url = row.pdf_url or metadata.get("pdf_url")
+            text_key = metadata.get("text_key") or row.key
             entry["pdf_url"] = pdf_url
+            entry["text_key"] = text_key
             if args.print_metadata:
                 entry["metadata"] = metadata.get("raw", {})
-            if not pdf_url:
-                entry["status"] = "missing_pdf_url"
-                entry["hint"] = "Run again with --print-metadata, then pass --pdf-field FIELD if the URL is exposed under a custom field."
-                report.append(entry)
-                print(f"{row.key}: no PDF URL found in metadata")
-                continue
             if args.dry_run:
                 entry["status"] = "resolved"
                 report.append(entry)
-                print(f"{row.key}: would download {pdf_url}")
+                if pdf_url:
+                    print(f"{row.key}: would download {pdf_url}")
+                elif not args.no_text_fallback:
+                    print(f"{row.key}: no PDF URL found; would try texts_and_annotations for {text_key}")
+                else:
+                    print(f"{row.key}: no PDF URL found")
                 continue
 
-            pdf_path = args.download_dir / row.country_iso3.upper() / f"{_safe_name(row.key)}.pdf"
-            api.download_pdf(pdf_url, pdf_path)
-            meta = make_meta(
-                country_iso3=row.country_iso3,
-                party_id=row.party_id,
-                election_id=row.election_id,
-                doc_date=row.doc_date,
-                doc_type=row.doc_type,
-                language=row.language,
-                source_url=pdf_url,
-                source_path=str(pdf_path),
-                reliability=row.reliability,
-            )
-            segments = pipeline.ingest_pdf(pdf_path, meta)
             memory = memories.setdefault(row.country_iso3.upper(), CountryMemory(row.country_iso3))
-            memory.add_documents(segments)
-            entry.update({"status": "ingested", "pdf_path": str(pdf_path), "segments": len(segments)})
-            print(f"{row.key}: downloaded and indexed ({len(segments)} segments)")
+            if pdf_url:
+                pdf_path = args.download_dir / row.country_iso3.upper() / f"{_safe_name(row.key)}.pdf"
+                try:
+                    api.download_pdf(pdf_url, pdf_path)
+                    meta = make_meta(
+                        country_iso3=row.country_iso3,
+                        party_id=row.party_id,
+                        election_id=row.election_id,
+                        doc_date=row.doc_date,
+                        doc_type=row.doc_type,
+                        language=row.language,
+                        source_url=pdf_url,
+                        source_path=str(pdf_path),
+                        reliability=row.reliability,
+                    )
+                    segments = pipeline.ingest_pdf(pdf_path, meta)
+                    memory.add_documents(segments)
+                    entry.update({"status": "ingested_pdf", "pdf_path": str(pdf_path), "segments": len(segments)})
+                    print(f"{row.key}: downloaded PDF and indexed ({len(segments)} segments)")
+                    report.append(entry)
+                    continue
+                except ManifestoAPIError as exc:
+                    entry["pdf_error"] = str(exc)
+                    if args.no_text_fallback:
+                        raise
+                    print(f"{row.key}: PDF blocked; trying texts_and_annotations fallback")
+
+            if args.no_text_fallback:
+                entry["status"] = "missing_pdf_url"
+                entry["hint"] = "Run again with --print-metadata, then pass --pdf-field FIELD if the URL is exposed under a custom field."
+                report.append(entry)
+                print(f"{row.key}: no PDF URL found")
+                continue
+
+            text_path = _ingest_text_fallback(
+                api=api,
+                pipeline=pipeline,
+                memory=memory,
+                row=row,
+                text_key=text_key,
+                text_dir=args.text_dir,
+                translation=args.translation,
+                make_meta=make_meta,
+            )
+            entry.update({"status": "ingested_api_text", **text_path})
+            print(f"{row.key}: indexed API text fallback ({text_path['segments']} segments)")
         except ManifestoAPIError as exc:
             entry.update({"status": "api_error", "error": str(exc)})
             report.append(entry)
@@ -155,13 +188,52 @@ def main() -> None:
 
 def _resolve_metadata(api: ManifestoAPI, row: ManifestoIngestionRow, pdf_field: str | None) -> dict[str, Any]:
     if row.pdf_url:
-        return {"pdf_url": row.pdf_url, "raw": {}}
+        return {"pdf_url": row.pdf_url, "text_key": row.key, "raw": {}}
     documents = api.resolve_documents([row.key], version=row.metadata_version, pdf_field=pdf_field)
     if not documents:
-        return {"pdf_url": None, "raw": {}}
+        return {"pdf_url": None, "text_key": row.key, "raw": {}}
     doc = documents[0]
-    return {"pdf_url": doc.pdf_url or find_pdf_url(doc.metadata, preferred_field=pdf_field), "raw": doc.metadata}
+    return {
+        "pdf_url": doc.pdf_url or find_pdf_url(doc.metadata, preferred_field=pdf_field),
+        "text_key": doc.key,
+        "raw": doc.metadata,
+    }
 
+
+def _ingest_text_fallback(
+    *,
+    api: ManifestoAPI,
+    pipeline: Any,
+    memory: Any,
+    row: ManifestoIngestionRow,
+    text_key: str,
+    text_dir: Path,
+    translation: str | None,
+    make_meta: Any,
+) -> dict[str, Any]:
+    texts = api.texts_and_annotations([text_key], version=row.metadata_version, translation=translation)
+    if not texts and text_key != row.key:
+        texts = api.texts_and_annotations([row.key], version=row.metadata_version, translation=translation)
+    if not texts:
+        raise ManifestoAPIError(f"No machine-readable text returned for {text_key}")
+    api_text = texts[0]
+    text_path = text_dir / row.country_iso3.upper() / f"{_safe_name(row.key)}.txt"
+    text_path.parent.mkdir(parents=True, exist_ok=True)
+    text_path.write_text(api_text.text, encoding="utf-8")
+    meta = make_meta(
+        country_iso3=row.country_iso3,
+        party_id=row.party_id,
+        election_id=row.election_id,
+        doc_date=row.doc_date,
+        doc_type=f"{row.doc_type}_api_text",
+        language=row.language,
+        source_url="https://manifesto-project.wzb.eu/api/v1/texts_and_annotations",
+        source_path=str(text_path),
+        reliability=row.reliability,
+    )
+    segments = pipeline.ingest_text(api_text.text, meta)
+    memory.add_documents(segments)
+    return {"text_key": api_text.key, "text_path": str(text_path), "segments": len(segments)}
 
 def _load_rows(args: argparse.Namespace) -> list[ManifestoIngestionRow]:
     rows: list[ManifestoIngestionRow] = []
@@ -214,8 +286,8 @@ def _safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in value)
 
 
-def _reset_generated_data(download_dir: Path) -> None:
-    for path in (download_dir, ROOT / "data" / "manifesto_ingestion"):
+def _reset_generated_data(download_dir: Path, text_dir: Path) -> None:
+    for path in (download_dir, text_dir, ROOT / "data" / "manifesto_ingestion"):
         if path.exists():
             shutil.rmtree(path)
 
