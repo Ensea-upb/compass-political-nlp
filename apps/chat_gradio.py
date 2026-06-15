@@ -41,13 +41,13 @@ def main() -> None:
     engine = ChatEngine(CountryMemory(args.country))
     cutoff = date.fromisoformat(args.as_of)
 
-    def respond(message: str, history: list[dict[str, str]]):
+    def respond(message: str, history):
         request = ChatRequest(
             question=message,
             as_of=cutoff,
             party_id=args.party,
             k=args.k,
-            history=history,
+            history=_normalize_history(history),
         )
         response = engine.ask(request)
         answer = response.answer + "\n\n### Sources\n" + format_citations(response.citations)
@@ -57,10 +57,27 @@ def main() -> None:
         fn=respond,
         title="COMPASS Chat",
         description=f"Corpus: {args.country.upper()} | as_of={cutoff.isoformat()} | party={args.party or 'all'}",
-        type="messages",
     )
     demo.launch(server_name=args.host, server_port=args.port)
 
+
+
+def _normalize_history(history) -> list[dict[str, str]]:
+    """Accept both old Gradio tuple history and newer message dictionaries."""
+    if not history:
+        return []
+    if isinstance(history[0], dict):
+        return [item for item in history if item.get("role") in {"user", "assistant"}]
+    messages: list[dict[str, str]] = []
+    for item in history:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        user_msg, assistant_msg = item
+        if user_msg:
+            messages.append({"role": "user", "content": str(user_msg)})
+        if assistant_msg:
+            messages.append({"role": "assistant", "content": str(assistant_msg)})
+    return messages
 
 if __name__ == "__main__":
     main()

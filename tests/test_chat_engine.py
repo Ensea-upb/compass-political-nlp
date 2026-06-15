@@ -58,3 +58,14 @@ def test_build_citations_and_format_sources():
 
     assert citations[0].country_iso3 == "DEU"
     assert "doc1:p000c000" in format_citations(citations)
+
+def test_gradio_history_normalizer_accepts_tuple_history():
+    from apps.chat_gradio import _normalize_history
+
+    messages = _normalize_history([("hello", "hi"), ("next", None)])
+
+    assert messages == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "next"},
+    ]
