@@ -21,3 +21,8 @@ def test_default_config_has_no_proprietary_api_models() -> None:
 def test_llm_api_base_env_override(monkeypatch) -> None:
     monkeypatch.setenv("COMPASS_LLM_API_BASE", "http://vllm.local:9000/v1")
     assert LLMConfig().llm_api_base == "http://vllm.local:9000/v1"
+
+def test_judge_models_env_accepts_comma_separated_list(monkeypatch) -> None:
+    monkeypatch.setenv("COMPASS_JUDGE_MODELS", "Qwen/Qwen2.5-7B-Instruct")
+    assert LLMConfig().judge_models == ["Qwen/Qwen2.5-7B-Instruct"]
+

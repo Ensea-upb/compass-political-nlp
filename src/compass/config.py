@@ -15,9 +15,10 @@ alternatives : CHOIX_COMPOSANTS.md.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class LLMConfig(BaseSettings):
@@ -33,7 +34,7 @@ class LLMConfig(BaseSettings):
         extra="ignore",
     )
 
-    judge_models: list[str] = Field(default_factory=lambda: [
+    judge_models: Annotated[list[str], NoDecode] = Field(default_factory=lambda: [
         "Qwen/Qwen3-32B",
         "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
