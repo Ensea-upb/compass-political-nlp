@@ -41,3 +41,10 @@ def test_chat_web_answer_question_calls_engine():
 
     assert "Evidence-based answer" in answer
     assert "Sources" in answer
+
+def test_chat_web_uses_relative_ask_endpoint():
+    from apps.chat_web import HTML
+
+    assert "fetch('./ask'" in HTML
+    assert "fetch('/ask'" not in HTML
+    assert "Non-JSON response from server" in HTML

@@ -87,12 +87,18 @@ HTML = """<!doctype html>
       question.value = '';
       send.disabled = true;
       try {
-        const response = await fetch('/ask', {
+        const response = await fetch('./ask', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({question: text, history})
         });
-        const payload = await response.json();
+        const raw = await response.text();
+        let payload;
+        try {
+          payload = JSON.parse(raw);
+        } catch (parseError) {
+          throw new Error('Non-JSON response from server: ' + raw.slice(0, 240));
+        }
         if (!response.ok || payload.error) {
           throw new Error(payload.error || ('HTTP ' + response.status));
         }
