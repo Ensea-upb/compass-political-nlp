@@ -47,6 +47,7 @@ class LLMConfig(BaseSettings):
     llm_api_key: str = "EMPTY"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2000
+    hf_device: str = "auto"  # "auto" | "cpu" | "cuda" | device index
 
     @field_validator("judge_models", mode="before")
     @classmethod
@@ -54,6 +55,29 @@ class LLMConfig(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    def hf_pipeline_kwargs(self) -> dict[str, int | str]:
+        """Device kwargs for transformers pipelines.
+
+        Set COMPASS_HF_DEVICE=cpu on small GPUs when vLLM already owns the GPU.
+        """
+        device = str(self.hf_device).strip().lower()
+        if device == "auto" or not device:
+            return {}
+        if device == "cpu":
+            return {"device": -1}
+        if device.isdigit() or (device.startswith("-") and device[1:].isdigit()):
+            return {"device": int(device)}
+        return {"device": device}
+
+    def hf_model_device(self) -> str | None:
+        """Device value for sentence-transformers classes."""
+        device = str(self.hf_device).strip().lower()
+        if device == "auto" or not device:
+            return None
+        if device == "-1":
+            return "cpu"
+        return device
 
     def litellm_model(self, model_name: str) -> str:
         """Returns the LiteLLM model identifier for the configured backend."""

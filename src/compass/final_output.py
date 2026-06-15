@@ -1,4 +1,4 @@
-﻿"""C13 — Sortie finale : score + justification + incertitude, auditables.
+"""C13 — Sortie finale : score + justification + incertitude, auditables.
 
 ÉTAT DE L'ART RÉUTILISÉ :
     - pydantic : le format de sortie est le schéma ``FinalAnswer`` (bloc 13
@@ -30,7 +30,7 @@ class AnswerComposer:
     """Compose la réponse finale et vérifie la fidélité des justifications."""
 
     def __init__(self, entailment_threshold: float = 0.7) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model)
+        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
         self._threshold = entailment_threshold
 
     def compose(self, case: CaseKey, sheet: VariableSheet, diagnosis: Diagnosis,

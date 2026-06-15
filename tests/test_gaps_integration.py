@@ -170,35 +170,26 @@ class TestGap2_HyDE:
                 self.r.retrieve(self._dossier(), _sheet())
             m.assert_not_called()
 
-    def test_generate_hyde_doc_calls_litellm(self):
-        with patch("compass.internal_retrieval.litellm") as mock_ll, \
+    def test_generate_hyde_doc_calls_llm_client(self):
+        with patch("compass.internal_retrieval.complete_chat", return_value="Passage hypothétique.") as mock_llm, \
              patch("compass.internal_retrieval.settings") as s:
             s.hyde_model = "Qwen/Qwen3-14B"
             s.hyde_max_tokens = 250
-            s.litellm_kwargs.return_value = {
-                "model": "openai/Qwen/Qwen3-14B",
-                "api_base": "http://localhost:8000/v1",
-                "api_key": "EMPTY",
-            }
-            resp = MagicMock()
-            resp.choices[0].message.content = "Passage hypothétique."
-            mock_ll.completion.return_value = resp
 
             out = self.r._generate_hyde_doc(_sheet())
             assert out == "Passage hypothétique."
-            s.litellm_kwargs.assert_called_once_with("Qwen/Qwen3-14B")
-            kw = mock_ll.completion.call_args[1]
-            assert kw["model"] == "openai/Qwen/Qwen3-14B"
-            assert kw["api_base"] == "http://localhost:8000/v1"
-            assert kw["api_key"] == "EMPTY"
+            mock_llm.assert_called_once()
+            args, kw = mock_llm.call_args
+            assert args[0] == "Qwen/Qwen3-14B"
             assert kw["temperature"] == 0.3
+            assert kw["max_tokens"] == 250
 
     def test_hyde_degrades_gracefully_on_api_error(self):
-        with patch("compass.internal_retrieval.litellm") as mock_ll, \
+        with patch("compass.internal_retrieval.complete_chat") as mock_llm, \
              patch("compass.internal_retrieval.settings") as s:
             s.hyde_model = "Qwen/Qwen3-14B"
             s.hyde_max_tokens = 250
-            mock_ll.completion.side_effect = Exception("API down")
+            mock_llm.side_effect = Exception("API down")
             assert self.r._generate_hyde_doc(_sheet()) == ""
 
     def test_parent_text_injected(self):

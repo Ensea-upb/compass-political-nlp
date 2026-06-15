@@ -68,7 +68,7 @@ class CountryMemory:
         self._conn = sqlite3.connect(settings.sqlite_path)
         self._conn.executescript(_SCHEMA)
         client = chromadb.PersistentClient(path=str(settings.chroma_dir))
-        embed = SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model)
+        embed = SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model, **({"device": settings.hf_model_device()} if settings.hf_model_device() else {}))
         self._col = client.get_or_create_collection(
             name=f"compass_country_{self.country.lower()}", embedding_function=embed
         )

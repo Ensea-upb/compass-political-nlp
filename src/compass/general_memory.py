@@ -1,4 +1,4 @@
-﻿"""C02 — Mémoire générale comparative : les connaissances portables entre pays.
+"""C02 — Mémoire générale comparative : les connaissances portables entre pays.
 
 ÉTAT DE L'ART RÉUTILISÉ :
     - Stockage + recherche vectorielle : ChromaDB (persistant, métadonnées filtrables) —
@@ -35,7 +35,7 @@ class GeneralMemory:
 
     def __init__(self) -> None:
         self._client = chromadb.PersistentClient(path=str(settings.chroma_dir))
-        self._embed = SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model)
+        self._embed = SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model, **({"device": settings.hf_model_device()} if settings.hf_model_device() else {}))
         self._col = self._client.get_or_create_collection(
             name=self.COLLECTION, embedding_function=self._embed
         )

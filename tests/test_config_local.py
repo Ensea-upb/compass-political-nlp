@@ -26,3 +26,8 @@ def test_judge_models_env_accepts_comma_separated_list(monkeypatch) -> None:
     monkeypatch.setenv("COMPASS_JUDGE_MODELS", "Qwen/Qwen2.5-7B-Instruct")
     assert LLMConfig().judge_models == ["Qwen/Qwen2.5-7B-Instruct"]
 
+def test_hf_device_cpu_sets_cpu_pipeline_device(monkeypatch) -> None:
+    monkeypatch.setenv("COMPASS_HF_DEVICE", "cpu")
+    config = LLMConfig()
+    assert config.hf_pipeline_kwargs() == {"device": -1}
+    assert config.hf_model_device() == "cpu"

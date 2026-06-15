@@ -1,4 +1,4 @@
-﻿"""C09 — Qualification des preuves + moteur de diagnostic.
+"""C09 — Qualification des preuves + moteur de diagnostic.
 
 Révision post-audit (2026-06-12) — P0-5 : le maillon manquant est ajouté.
 Avant le diagnostic, chaque passage récupéré est QUALIFIÉ :
@@ -54,7 +54,7 @@ class EvidenceQualifier:
 
     def __init__(self, entail_threshold: float = 0.75,
                  contra_threshold: float = 0.75) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model)
+        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
         self._entail = entail_threshold
         self._contra = contra_threshold
 
@@ -101,7 +101,7 @@ class DiagnosisEngine:
     """Confronte les preuves qualifiées : convergences, contradictions, manques."""
 
     def __init__(self, max_pairs: int = 60) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model)
+        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
         self._max_pairs = max_pairs
 
     def diagnose(self, case: CaseKey, sheet: VariableSheet,

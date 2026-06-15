@@ -99,3 +99,37 @@ export COMPASS_JUDGE_MODELS="Qwen/Qwen2.5-7B-Instruct,mistralai/Mistral-7B-Instr
 
 The scientific rule is unchanged: document any substitution and rerun the pilot
 ablations before treating scores as research outputs.
+
+## Small-GPU Onyxia profile: NVIDIA A2 16 GB
+
+If the service exposes a 16 GB GPU, reserve the GPU for vLLM and run the
+COMPASS-side Hugging Face components on CPU:
+
+```bash
+# Terminal 1: vLLM on GPU
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --tensor-parallel-size 1 \
+  --gpu-memory-utilization 0.85 \
+  --max-model-len 4096 \
+  --max-num-seqs 1 \
+  --enforce-eager
+```
+
+```bash
+# Terminal 2: COMPASS on CPU for HF classifiers/re-rankers, HTTP to vLLM
+export COMPASS_LLM_BACKEND=local
+export COMPASS_LLM_API_BASE=http://localhost:8000/v1
+export COMPASS_LLM_API_KEY=EMPTY
+export COMPASS_JUDGE_MODELS=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HYDE_MODEL=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HF_DEVICE=cpu
+
+python examples/run_real_architecture.py full --reset
+```
+
+This avoids loading the NLI classifier, reranker, or embeddings on the same GPU
+that already hosts vLLM.

@@ -1,4 +1,4 @@
-﻿"""C15 — Couche transversale de garde-fous : temporalité, traçabilité, contamination.
+"""C15 — Couche transversale de garde-fous : temporalité, traçabilité, contamination.
 
 ÉTAT DE L'ART RÉUTILISÉ :
     - Traçabilité : structlog (journalisation structurée JSON) + hashlib (stdlib).
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from compass.config import settings
+from compass.llm_client import complete_chat
 from compass.schemas import EvidenceItem
 
 logger = logging.getLogger(__name__)
@@ -105,17 +106,12 @@ def contamination_probe(model_name: str, party_name: str, election_year: int,
     prompt = (f"Sans aucun document, quel est le score V-Party '{variable_id}' "
               f"du parti {party_name} pour l'élection de {election_year} ? "
               "Réponds uniquement par un nombre, ou 'inconnu'.")
-    try:
-        import litellm
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "contamination_probe requires the optional dependency 'litellm'. "
-            "Install the full project requirements with: pip install -r requirements.txt"
-        ) from exc
-    resp = litellm.completion(**settings.litellm_kwargs(model_name),
-                              temperature=0.0, max_tokens=10,
-                              messages=[{"role": "user", "content": prompt}])
-    raw = resp.choices[0].message.content.strip()
+    raw = complete_chat(
+        model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=10,
+    )
     knows = bool(re.fullmatch(r"-?\d+([.,]\d+)?", raw))
     logger.info("Sonde contamination %s/%s : %s", model_name, variable_id, raw)
     return {"model": model_name, "claims_knowledge": knows, "raw": raw}

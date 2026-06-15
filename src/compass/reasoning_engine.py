@@ -23,11 +23,11 @@ from __future__ import annotations
 import json
 import logging
 
-import litellm
 from transformers import pipeline as hf_pipeline
 
 from compass.country_memory import CountryMemory
 from compass.config import settings
+from compass.llm_client import complete_chat
 from compass.schemas import Diagnosis, JudgeAnswer, VariableMethod, VariableSheet
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class ReasoningEngine:
 
     def __init__(self, country: CountryMemory) -> None:
         self._country = country
-        self._zeroshot = hf_pipeline("zero-shot-classification", model=settings.nli_model)
+        self._zeroshot = hf_pipeline("zero-shot-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
 
     # ------------------------------------------------------------------ routage
     def answer(self, sheet: VariableSheet, diagnosis: Diagnosis,
@@ -103,7 +103,8 @@ class ReasoningEngine:
         """
         if diagnosis.dominant_language == "en":
             classifier = hf_pipeline("zero-shot-classification",
-                                     model=settings.political_classifier)
+                                     model=settings.political_classifier,
+                                     **settings.hf_pipeline_kwargs())
             used = settings.political_classifier
         else:
             classifier = self._zeroshot
@@ -122,18 +123,14 @@ class ReasoningEngine:
                     model_name: str, prompt_variant: str) -> JudgeAnswer:
         """Raisonnement multi-sources guidé par la fiche — le prompt EST la fiche."""
         prompt = self._build_prompt(sheet, diagnosis, prompt_variant)
-        # Compatibilité litellm : response_format n'est pas supporté par tous
-        # les fournisseurs — repli sans contrainte + parsing strict (audit §8).
-        kwargs = dict(settings.litellm_kwargs(model_name),
-                      temperature=settings.llm_temperature,
-                      max_tokens=settings.llm_max_tokens,
-                      messages=[{"role": "user", "content": prompt}])
-        try:
-            resp = litellm.completion(response_format={"type": "json_object"}, **kwargs)
-        except litellm.BadRequestError:
-            logger.warning("%s : response_format non supporté — repli texte.", model_name)
-            resp = litellm.completion(**kwargs)
-        payload = json.loads(resp.choices[0].message.content)
+        raw = complete_chat(
+            model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(raw)
         return JudgeAnswer(
             judge_id=f"{model_name}::{prompt_variant}", model_name=model_name,
             score=float(payload["score"]), rationale=str(payload.get("rationale", "")),

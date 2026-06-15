@@ -38,7 +38,8 @@ ddgs>=9.0
 transformers>=4.44
 torch>=2.2
 
-# C10/C11/C15 - multi-provider LLMs and tracing
+# C10/C11/C15 - local/API LLMs and tracing
+openai>=1.0
 litellm>=1.40
 structlog>=24.1
 

@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import logging
 
-import litellm
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 
 from compass.country_memory import CountryMemory
 from compass.party_election_case import CaseFile
 from compass.config import settings
+from compass.llm_client import complete_chat
 from compass.schemas import CaseKey, VariableSheet
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,9 @@ class InternalRetriever:
     def __init__(self, country: CountryMemory, top_k: int = 10) -> None:
         self._country = country
         self._top_k = top_k
-        self._reranker = CrossEncoder(settings.reranker_model)
+        device = settings.hf_model_device()
+        kwargs = {"device": device} if device else {}
+        self._reranker = CrossEncoder(settings.reranker_model, **kwargs)
 
     # ------------------------------------------------------------------ public
     def retrieve(
@@ -166,13 +168,12 @@ class InternalRetriever:
             f"Ecris directement le passage, sans introduction ni commentaire."
         )
         try:
-            resp = litellm.completion(
-                **settings.litellm_kwargs(settings.hyde_model),
+            return complete_chat(
+                settings.hyde_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=settings.hyde_max_tokens,
             )
-            return resp.choices[0].message.content.strip()
         except Exception as exc:
             logger.warning(
                 "HyDE desactive pour %s : %s", sheet.variable_id, exc
