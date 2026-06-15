@@ -25,6 +25,20 @@ pip install -r requirements-chat.txt
 
 ## Launch on Onyxia
 
+Recommended stable interface, without Gradio:
+
+```bash
+python apps/chat_web.py \
+  --country DEU \
+  --as-of 2009-09-27 \
+  --party 41320 \
+  --port 41771
+```
+
+The older Gradio prototype remains available as `apps/chat_gradio.py`, but `chat_web.py` is preferred on Onyxia when Gradio returns frontend JSON parsing errors.
+
+## Launch with Gradio
+
 After ingesting Manifesto documents:
 
 ```bash
