@@ -24,9 +24,8 @@ import itertools
 import logging
 from collections import Counter
 
-from transformers import pipeline as hf_pipeline
+from compass.nlp_models import nli_pipeline
 
-from compass.config import settings
 from compass.schemas import (CaseKey, Diagnosis, DocumentMeta, EvidenceItem,
                      EvidenceRegime, Segment, SourceReliability, VariableSheet)
 
@@ -54,7 +53,7 @@ class EvidenceQualifier:
 
     def __init__(self, entail_threshold: float = 0.75,
                  contra_threshold: float = 0.75) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
+        self._nli = nli_pipeline()
         self._entail = entail_threshold
         self._contra = contra_threshold
 
@@ -101,7 +100,7 @@ class DiagnosisEngine:
     """Confronte les preuves qualifiées : convergences, contradictions, manques."""
 
     def __init__(self, max_pairs: int = 60) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
+        self._nli = nli_pipeline()
         self._max_pairs = max_pairs
 
     def diagnose(self, case: CaseKey, sheet: VariableSheet,

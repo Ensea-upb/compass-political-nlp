@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import logging
 
-from transformers import pipeline as hf_pipeline
+from compass.nlp_models import nli_pipeline
 
 from compass.aggregation import combined_confidence
-from compass.config import settings
 from compass.schemas import (AggregatedJudgment, CaseKey, Diagnosis, EvidenceItem,
                      FinalAnswer, VariableSheet)
 
@@ -30,7 +29,7 @@ class AnswerComposer:
     """Compose la réponse finale et vérifie la fidélité des justifications."""
 
     def __init__(self, entailment_threshold: float = 0.7) -> None:
-        self._nli = hf_pipeline("text-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
+        self._nli = nli_pipeline()
         self._threshold = entailment_threshold
 
     def compose(self, case: CaseKey, sheet: VariableSheet, diagnosis: Diagnosis,

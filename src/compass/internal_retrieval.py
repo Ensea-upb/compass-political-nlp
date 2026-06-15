@@ -164,8 +164,10 @@ class InternalRetriever:
             f"Echelle :\n{scale_anchors}\n\n"
             f"Redige un passage court (3-5 phrases) comme s'il etait extrait "
             f"d'un manifeste electoral, discours ou rapport d'observation qui "
-            f"constituerait une preuve claire d'un score eleve sur cette variable. "
-            f"Ecris directement le passage, sans introduction ni commentaire."
+            f"constituerait une preuve directe sur cette variable, quel que soit "
+            f"le niveau observe sur l'echelle. Le passage peut indiquer un niveau "
+            f"faible, moyen ou eleve. Ecris directement le passage, sans introduction "
+            f"ni commentaire."
         )
         try:
             return complete_chat(

@@ -20,25 +20,70 @@ pas un texte libre : c'est la réponse à Halterman & Keith 2025.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
-
-from transformers import pipeline as hf_pipeline
+import operator
 
 from compass.country_memory import CountryMemory
 from compass.config import settings
 from compass.llm_client import complete_chat
+from compass.nlp_models import political_classifier_pipeline, zero_shot_pipeline
 from compass.schemas import Diagnosis, JudgeAnswer, VariableMethod, VariableSheet
+
+_SAFE_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+_SAFE_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
 
 logger = logging.getLogger(__name__)
 
+
+def safe_eval_formula(rule: str, env: dict[str, float]) -> float:
+    """Evaluate a numeric codebook formula without Python dynamic evaluation.
+
+    Allowed grammar: numeric constants, variable names present in ``env``,
+    +, -, *, /, parentheses, and unary +/-.
+    """
+    if not rule or not rule.strip():
+        raise ValueError("formule vide")
+    tree = ast.parse(rule, mode="eval")
+    return float(_eval_formula_node(tree.body, env))
+
+
+def _eval_formula_node(node: ast.AST, env: dict[str, float]) -> float:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return float(node.value)
+    if isinstance(node, ast.Name):
+        if node.id not in env:
+            raise NameError(f"variable inconnue: {node.id}")
+        return float(env[node.id])
+    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
+        left = _eval_formula_node(node.left, env)
+        right = _eval_formula_node(node.right, env)
+        return float(_SAFE_BIN_OPS[type(node.op)](left, right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
+        return float(_SAFE_UNARY_OPS[type(node.op)](_eval_formula_node(node.operand, env)))
+    raise ValueError(f"expression non autorisée: {type(node).__name__}")
+
+
+def parse_scale_score(label: object) -> float:
+    """Parse a numeric scale prefix such as '3: committed'."""
+    prefix = str(label).split(":", 1)[0].strip()
+    return float(prefix)
 
 class ReasoningEngine:
     """Route chaque variable vers sa méthode de traitement appropriée."""
 
     def __init__(self, country: CountryMemory) -> None:
         self._country = country
-        self._zeroshot = hf_pipeline("zero-shot-classification", model=settings.nli_model, **settings.hf_pipeline_kwargs())
+        self._zeroshot = zero_shot_pipeline()
 
     # ------------------------------------------------------------------ routage
     def answer(self, sheet: VariableSheet, diagnosis: Diagnosis,
@@ -83,8 +128,8 @@ class ReasoningEngine:
         )
         env = {row.variable_id: row.score for row in deps.itertuples()}
         try:
-            score = float(eval(rule, {"__builtins__": {}}, env))  # noqa: S307 — formule du codebook, environnement clos
-        except (NameError, SyntaxError, TypeError) as exc:
+            score = float(safe_eval_formula(rule, env))
+        except (NameError, SyntaxError, TypeError, ValueError, ZeroDivisionError) as exc:
             logger.error("Formule inapplicable (%s) : %s", sheet.variable_id, exc)
             score, conf = float("nan"), 0.0
         else:
@@ -102,9 +147,7 @@ class ReasoningEngine:
         multilingue sinon. La langue vient du diagnostic (C09).
         """
         if diagnosis.dominant_language == "en":
-            classifier = hf_pipeline("zero-shot-classification",
-                                     model=settings.political_classifier,
-                                     **settings.hf_pipeline_kwargs())
+            classifier = political_classifier_pipeline()
             used = settings.political_classifier
         else:
             classifier = self._zeroshot
@@ -113,11 +156,16 @@ class ReasoningEngine:
         labels = [f"{k}: {v}" for k, v in sheet.scale.items()]
         res = classifier(text or "aucune preuve", candidate_labels=labels)
         best = res["labels"][0]
-        score = float(str(best).split(":")[0])
+        try:
+            score = parse_scale_score(best)
+            confidence = float(res["scores"][0])
+        except (TypeError, ValueError) as exc:
+            logger.error("Label non numérique (%s) : %s", sheet.variable_id, exc)
+            score, confidence = float("nan"), 0.0
         return JudgeAnswer(judge_id=f"clf::{sheet.variable_id}::{used.split('/')[-1]}",
                            model_name=used, score=score,
                            rationale=f"Zero-shot ({used}), ancre retenue : {best}",
-                           confidence=float(res["scores"][0]))
+                           confidence=confidence)
 
     def _llm_guided(self, sheet: VariableSheet, diagnosis: Diagnosis,
                     model_name: str, prompt_variant: str) -> JudgeAnswer:

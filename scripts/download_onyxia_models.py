@@ -67,6 +67,8 @@ def _selected_models(cfg: LLMConfig, args: argparse.Namespace) -> list[str]:
         models.append(cfg.vision_model)
     deduped: list[str] = []
     for model in models:
+        if not model:
+            continue
         if model not in deduped:
             deduped.append(model)
     return deduped

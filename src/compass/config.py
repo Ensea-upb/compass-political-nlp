@@ -35,12 +35,10 @@ class LLMConfig(BaseSettings):
     )
 
     judge_models: Annotated[list[str], NoDecode] = Field(default_factory=lambda: [
-        "Qwen/Qwen3-32B",
-        "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+        "Qwen/Qwen2.5-3B-Instruct",
     ])
-    hyde_model: str = "Qwen/Qwen3-14B"
-    vision_model: str = "Qwen/Qwen2.5-VL-32B-Instruct"
+    hyde_model: str = "Qwen/Qwen2.5-3B-Instruct"
+    vision_model: str | None = None
 
     llm_backend: str = "local"          # "local" | "api"
     llm_api_base: str = "http://localhost:8000/v1"
@@ -146,7 +144,7 @@ class CompassSettings(LLMConfig):
     # --- HyDE (Hypothetical Document Embeddings, Gao et al. 2022) ---
     # Génère un passage hypothétique avant le retrieval dense pour mieux
     # capturer la sémantique des documents cibles (vs. la question abstraite).
-    hyde_enabled: bool = True
+    hyde_enabled: bool = False
     hyde_max_tokens: int = 250
 
     # --- Chunking hiérarchique parent-child (Gap 1) ---
