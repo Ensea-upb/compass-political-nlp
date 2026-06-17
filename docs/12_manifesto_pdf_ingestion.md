@@ -1,7 +1,18 @@
 # Manifesto Project PDF ingestion
 
-COMPASS first tries to ingest original Manifesto Project PDFs when the API metadata exposes a downloadable document URL. If the original PDF endpoint is blocked with HTTP 401/403, the script automatically falls back to the official `texts_and_annotations` API and ingests the machine-readable manifesto text.
+COMPASS follows the official Manifesto Project API workflow: build `party_date` keys from the core dataset, query `metadata`, use the returned `manifesto_id` for `texts_and_annotations`, and only download original PDFs when metadata exposes a downloadable document URL. If the original PDF endpoint is blocked with HTTP 401/403, the script automatically falls back to the official `texts_and_annotations` endpoint and ingests the machine-readable manifesto text.
 
+
+## Official API workflow
+
+The relevant official endpoints are under `https://manifesto-project.wzb.eu/api/v1/`:
+
+1. `list_core_versions` / `get_core` identify core dataset releases and party-election rows.
+2. `metadata` accepts `keys[]` values such as `41320_200909` and returns corpus metadata plus a `manifesto_id` such as `41320_2009`.
+3. `texts_and_annotations` should normally be called with the returned `manifesto_id`; it can also request an optional `translation`.
+4. Original PDFs are treated as a best-effort document source when metadata exposes a URL. Some `/down/originals/...pdf` links can still return HTTP 403 even with a valid API key, so the text fallback is part of the normal ingestion design.
+
+The client sends protected API requests with the `API_KEY` header from `MANIFESTO_API_KEY` and uses POST for `metadata` and `texts_and_annotations`, as recommended for parameter-heavy requests.
 ## 1. Prerequisites
 
 Create a Manifesto Project account, generate an API key, then expose it only as an environment variable:
@@ -67,7 +78,7 @@ python examples/run_manifesto_pdf_ingestion.py \
 If `pdf_url` is provided in the CSV, the script downloads it directly. If it is empty, the script resolves the URL through the Manifesto API metadata endpoint.
 
 
-## 3. Build the CSV automatically
+## 4. Build the CSV automatically
 
 For a quick validated batch, start from:
 
@@ -102,26 +113,28 @@ python scripts/build_manifesto_manifest.py \
   --language de \
   --output data/manifests/deu_2009.csv
 ```
-## 4. PDF blocked: automatic text fallback
+## 5. PDF blocked: automatic text fallback
 
 Some original document URLs such as `/down/originals/...pdf` can return HTTP 403 even when the metadata API accepts your key. In that case the script continues automatically with `texts_and_annotations` unless `--no-text-fallback` is passed.
 
 The fallback writes text files under `data/manifesto_texts/` and indexes them with `DocumentPipeline.ingest_text()`. Use `--translation en` if you want the API-provided English translation when available.
 
-## 5. What the script does
+## 6. What the script does
 
 ```text
-Manifesto key or CSV manifest
+Manifesto core dataset or CSV manifest
+-> party_date key, for example 41320_200909
 -> Manifesto API metadata
--> original PDF download into data/manifesto_pdfs/
--> DocumentPipeline.ingest_pdf()
+-> manifesto_id, for example 41320_2009
+-> original PDF download when exposed, otherwise texts_and_annotations
+-> DocumentPipeline.ingest_pdf() or DocumentPipeline.ingest_text()
 -> CountryMemory.add_documents()
 -> outputs/manifesto_pdf_ingestion_report.json
 ```
 
 This is the real COMPASS ingestion path: PyMuPDF extracts text PDFs, OCR is attempted for scanned pages, metadata is converted into `DocumentMeta`, then parent/child segments are indexed in ChromaDB.
 
-## 6. Onyxia notes
+## 7. Onyxia notes
 
 Onyxia should keep persistence enabled because the Manifesto corpus and embedding index can grow quickly. Use at least a persistent volume large enough for the PDFs plus `data/manifesto_ingestion/chroma/`.
 

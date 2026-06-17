@@ -58,13 +58,33 @@ class ManifestoAPI:
         self.api_key = api_key if api_key is not None else os.getenv("MANIFESTO_API_KEY")
         self.api_root = api_root.rstrip("/")
 
-    def list_core_versions(self) -> Any:
-        """Return available Manifesto core dataset versions."""
-        return self._request_json("list_core_versions", params=[], method="GET")
+    def list_core_versions(self, *, kind: str | None = None) -> Any:
+        """Return available Manifesto core dataset versions.
+
+        Official endpoint: ``list_core_versions``. This endpoint is public and
+        does not require an API key. ``kind="south_america"`` is supported by
+        the API for backward compatibility with older South America datasets.
+        """
+        params = [("kind", kind)] if kind else []
+        return self._request_json("list_core_versions", params=params, method="GET", require_api_key=False)
+
+    def list_metadata_versions(self, *, tag: bool | None = None, details: bool | None = None) -> Any:
+        """Return available Manifesto Corpus metadata versions.
+
+        Official endpoint: ``list_metadata_versions``. ``tag=true`` separates
+        version names and tags; ``details=true`` also asks for release notes.
+        """
+        params: list[tuple[str, str]] = []
+        if tag is not None:
+            params.append(("tag", _bool_param(tag)))
+        if details is not None:
+            params.append(("details", _bool_param(details)))
+        return self._request_json("list_metadata_versions", params=params, method="GET", require_api_key=False)
 
     def get_core_payload(self, version: str, kind: str = "dta") -> Any:
         """Return raw get_core API payload for debugging schema/format issues."""
         return self._request_json("get_core", params=[("key", version), ("kind", kind)], method="GET")
+
     def get_core_records(self, version: str, kind: str = "xlsx") -> list[dict[str, Any]]:
         """Return Manifesto core dataset rows from JSON, CSV, XLSX or Stata payloads."""
         tried: list[str] = []
@@ -80,17 +100,61 @@ class ManifestoAPI:
                 return records
         return []
 
-    def metadata(self, keys: list[str], version: str | None = None) -> list[dict[str, Any]]:
-        """Return corpus metadata for Manifesto keys such as ``41320_200909``."""
+    def get_parties(self, version: str, *, list_form: str = "short", raw: bool = False) -> Any:
+        """Return the party list for a core dataset version when available.
+
+        Official endpoint: ``get_parties`` with ``key``, optional
+        ``list_form`` (``short`` or ``long``), and optional ``raw``.
+        """
+        return self._request_json(
+            "get_parties",
+            params=[("key", version), ("list_form", list_form), ("raw", _bool_param(raw))],
+            method="GET",
+        )
+
+    def metadata_payload(self, keys: list[str], version: str | None = None) -> dict[str, Any]:
+        """Return raw ``metadata`` payload including ``items`` and ``missing_items``.
+
+        Official workflow: construct keys as ``<party>_<date>`` from the core
+        dataset, query ``metadata``, then use each returned ``manifesto_id`` for
+        ``texts_and_annotations``. POST is used because the API documentation
+        recommends POST for parameter-heavy ``metadata`` requests.
+        """
         if not keys:
-            return []
-        params: list[tuple[str, str]] = []
-        for key in keys:
-            params.append(("keys[]", key))
+            return {"items": [], "missing_items": []}
+        params = _key_params(keys)
         if version:
             params.append(("version", version))
-        payload = self._request_json("metadata", params=params)
-        return _coerce_items(payload)
+        payload = self._request_json("metadata", params=params, method="POST")
+        return _payload_with_items(payload)
+
+    def metadata(self, keys: list[str], version: str | None = None) -> list[dict[str, Any]]:
+        """Return corpus metadata items for keys such as ``41320_200909``."""
+        return _coerce_items(self.metadata_payload(keys, version=version))
+
+    def texts_and_annotations_payload(
+        self,
+        keys: list[str],
+        *,
+        version: str | None = None,
+        translation: str | None = None,
+    ) -> dict[str, Any]:
+        """Return raw ``texts_and_annotations`` payload.
+
+        Official endpoint parameters are ``keys[]``, ``version`` and optional
+        ``translation``. The keys should normally be ``manifesto_id`` values
+        returned by ``metadata``; they can differ from the original
+        ``<party>_<date>`` lookup key.
+        """
+        if not keys:
+            return {"items": [], "missing_items": []}
+        params = _key_params(keys)
+        if version:
+            params.append(("version", version))
+        if translation:
+            params.append(("translation", translation))
+        payload = self._request_json("texts_and_annotations", params=params, method="POST")
+        return _payload_with_items(payload)
 
     def texts_and_annotations(
         self,
@@ -100,19 +164,10 @@ class ManifestoAPI:
         translation: str | None = None,
     ) -> list[ManifestoText]:
         """Return machine-readable manifesto texts from the official API."""
-        if not keys:
-            return []
-        params: list[tuple[str, str]] = []
-        for key in keys:
-            params.append(("keys[]", key))
-        if version:
-            params.append(("version", version))
-        if translation:
-            params.append(("translation", translation))
-        payload = self._request_json("texts_and_annotations", params=params)
+        payload = self.texts_and_annotations_payload(keys, version=version, translation=translation)
         texts: list[ManifestoText] = []
-        for requested_key, item in zip(keys, _coerce_items(payload)):
-            key = str(item.get("manifesto_id") or item.get("key") or requested_key)
+        for item in _coerce_items(payload):
+            key = str(item.get("manifesto_id") or item.get("key") or item.get("id") or "")
             text = extract_manifesto_text(item)
             if text:
                 texts.append(ManifestoText(key=key, text=text, payload=item))
@@ -128,12 +183,12 @@ class ManifestoAPI:
         """Fetch metadata and infer original PDF URLs when exposed by the API."""
         items = self.metadata(keys, version=version)
         resolved: list[ManifestoDocument] = []
-        for requested_key, item in zip(keys, items):
+        for item in items:
             key = str(
-                item.get("key")
+                item.get("manifesto_id")
+                or item.get("key")
                 or item.get("manifesto_key")
-                or item.get("manifesto_id")
-                or requested_key
+                or ""
             )
             resolved.append(
                 ManifestoDocument(
@@ -180,7 +235,20 @@ class ManifestoAPI:
         with urllib.request.urlopen(req, timeout=120) as response:
             return response.read()
 
-    def _request_json(self, endpoint: str, params: list[tuple[str, str]], method: str = "POST") -> Any:
+    def _request_json(
+        self,
+        endpoint: str,
+        params: list[tuple[str, str]],
+        method: str = "POST",
+        *,
+        require_api_key: bool = True,
+    ) -> Any:
+        if require_api_key and not self.api_key:
+            raise ManifestoAPIError(
+                f"Manifesto API endpoint {endpoint} requires MANIFESTO_API_KEY. "
+                "Public endpoints are list_core_versions, list_metadata_versions, "
+                "get_core_codebook, get_core_citation and get_corpus_citation."
+            )
         url = f"{self.api_root}/{endpoint.lstrip('/')}"
         data = urllib.parse.urlencode(params).encode("utf-8")
         if method.upper() == "GET" and params:
@@ -212,6 +280,14 @@ class ManifestoAPI:
         if not self.api_key:
             return {}
         return {"API_KEY": self.api_key}
+
+
+def _bool_param(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _key_params(keys: list[str]) -> list[tuple[str, str]]:
+    return [("keys[]", key) for key in keys]
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -404,6 +480,14 @@ def debug_core_decoding(content: str, kind: str = "") -> dict[str, Any]:
         summary["read_ok"] = False
         summary["error"] = str(exc)
     return summary
+
+
+def _payload_with_items(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        items = _coerce_items(payload)
+        missing = payload.get("missing_items")
+        return {"items": items, "missing_items": missing if isinstance(missing, list) else []}
+    return {"items": _coerce_items(payload), "missing_items": []}
 
 
 def _coerce_items(payload: Any) -> list[dict[str, Any]]:
