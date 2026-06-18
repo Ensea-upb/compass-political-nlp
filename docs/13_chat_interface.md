@@ -23,6 +23,8 @@ The chat now separates two kinds of context:
 
 This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
+The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text and splits oversized fragments. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
+
 For small local vLLM models, the chat also applies a prompt budget:
 
 - at most 6 cited evidence passages are sent to the LLM;

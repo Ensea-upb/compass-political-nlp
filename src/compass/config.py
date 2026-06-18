@@ -149,7 +149,11 @@ class CompassSettings(LLMConfig):
 
     # --- Chunking hiérarchique parent-child (Gap 1) ---
     # Taille cible des blocs parents en caractères (~3-5 phrases).
-    parent_chunk_size: int = 400
+    parent_chunk_size: int = 700
+    # Les enfants restent citables, mais les fragments trop courts sont fusionnés
+    # avec leurs voisins pour éviter des preuves du type "Setting impulses.".
+    child_chunk_min_chars: int = 60
+    child_chunk_max_chars: int = 650
 
     # --- Graphe de connaissances politiques (C02b, Gap 3) ---
     graph_path: Path = Path("data/political_graph.graphml")

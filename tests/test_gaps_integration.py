@@ -127,6 +127,46 @@ class TestGap1_HierarchicalChunking:
         segs = self.p._finalize("Une seule phrase courte.", _meta(doc_id="d4"))
         assert len(segs) >= 1
 
+    def test_short_fragments_are_merged_into_citable_children(self):
+        text = (
+            "Setting impulses. Additional contributions. Questions raised. "
+            "We defend democratic accountability and transparent elections."
+        )
+
+        segs = self.p._finalize(text, _meta(doc_id="d5"))
+        children = [s for s in segs if s.parent_segment_id is not None]
+
+        assert children
+        assert all(child.text != "Setting impulses." for child in children)
+        assert any("Setting impulses. Additional contributions." in child.text for child in children)
+
+    def test_bullet_lists_keep_readable_units(self):
+        text = (
+            "Our economic priorities:\n"
+            "- Jobs and fair wages.\n"
+            "- Innovation and exports.\n"
+            "- Sustainable growth."
+        )
+
+        segs = self.p._finalize(text, _meta(doc_id="d6"))
+        child_text = " ".join(s.text for s in segs if s.parent_segment_id is not None)
+
+        assert "Jobs and fair wages." in child_text
+        assert "- Jobs" not in child_text
+
+    def test_long_children_are_bounded(self, monkeypatch):
+        from compass import document_pipeline as dp
+
+        monkeypatch.setattr(dp.settings, "child_chunk_min_chars", 20)
+        monkeypatch.setattr(dp.settings, "child_chunk_max_chars", 80)
+        text = " ".join(["democratic accountability"] * 40) + "."
+
+        segs = self.p._finalize(text, _meta(doc_id="d7"))
+        children = [s for s in segs if s.parent_segment_id is not None]
+
+        assert len(children) > 1
+        assert all(len(child.text) <= 80 for child in children)
+
     def test_country_memory_marks_parent_and_child_levels(self):
         from tests.conftest import CHROMA_COL
 

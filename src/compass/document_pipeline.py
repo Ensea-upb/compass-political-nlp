@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 _LANG_DETECTOR = LanguageDetectorBuilder.from_all_languages().build()
 
 
-_SENT_RE = re.compile(r"(?<=[.!?])\s+")
+_BLANK_LINE_RE = re.compile(r"\n\s*\n+")
+_SENT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9À-ÖØ-Þ\"'«(])")
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
 class DocumentPipeline:
     """Transforme une source brute en liste de ``Segment`` indexables.
@@ -139,10 +141,11 @@ class DocumentPipeline:
     # ------------------------------------------------------------------ interne
     def _finalize(self, text: str, meta: DocumentMeta) -> list[Segment]:
         """Nettoyage léger, détection de langue, hash, segmentation."""
-        text = " ".join(text.split())  # normalisation des espaces uniquement
-        meta.compute_hash(text)
+        segmented_text = _normalize_for_chunking(text)
+        flat_text = " ".join(segmented_text.split())
+        meta.compute_hash(flat_text)
 
-        detected = _LANG_DETECTOR.detect_language_of(text)
+        detected = _LANG_DETECTOR.detect_language_of(flat_text)
         if detected is not None:
             try:
                 meta.language = detected.iso_code_639_1.name.lower()
@@ -150,9 +153,9 @@ class DocumentPipeline:
                 meta.language = detected.name.lower()[:2]
 
         # --- Niveau 1 : blocs parents (thèmes, ~parent_chunk_size chars) ---
-        sentences = [s.strip() for s in _SENT_RE.split(text) if s.strip()]
-        if not sentences:
-            sentences = [text]
+        paragraphs = _paragraph_units(segmented_text)
+        if not paragraphs:
+            paragraphs = [[flat_text]]
 
         doc_id = meta.doc_id or str(uuid.uuid4())
         meta.doc_id = doc_id
@@ -177,7 +180,7 @@ class DocumentPipeline:
                 parent_segment_id=None,
             )
             parents.append(parent_seg)
-            for c_idx, sent in enumerate(buf):
+            for c_idx, sent in enumerate(_child_units(buf)):
                 child_id = f"{doc_id}:p{parent_idx:03d}c{c_idx:03d}"
                 children.append(Segment(
                     segment_id=child_id,
@@ -188,16 +191,106 @@ class DocumentPipeline:
                 ))
             parent_idx += 1
 
-        for sent in sentences:
-            if buf and buf_len + len(sent) > settings.parent_chunk_size:
+        for paragraph in paragraphs:
+            para_len = sum(len(unit) + 1 for unit in paragraph)
+            if buf and buf_len + para_len > settings.parent_chunk_size:
                 _flush_parent()
                 buf, buf_len = [], 0
-            buf.append(sent)
-            buf_len += len(sent) + 1
+            for unit in paragraph:
+                if buf and buf_len + len(unit) > settings.parent_chunk_size:
+                    _flush_parent()
+                    buf, buf_len = [], 0
+                buf.append(unit)
+                buf_len += len(unit) + 1
         _flush_parent()
 
         # Parents en premier (indexés comme contexte), enfants ensuite (indexés pour retrieval)
         return parents + children
+
+
+def _normalize_for_chunking(text: str) -> str:
+    """Normalize whitespace while preserving paragraph boundaries."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = _BLANK_LINE_RE.sub("\n\n", text)
+    return text.strip()
+
+
+def _paragraph_units(text: str) -> list[list[str]]:
+    paragraphs: list[list[str]] = []
+    for paragraph in _BLANK_LINE_RE.split(text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        units = _split_paragraph(paragraph)
+        if units:
+            paragraphs.append(units)
+    return paragraphs
+
+
+def _split_paragraph(paragraph: str) -> list[str]:
+    lines = [line.strip() for line in paragraph.split("\n") if line.strip()]
+    if len(lines) > 1 and any(_BULLET_RE.match(line) for line in lines):
+        units = [_BULLET_RE.sub("", line).strip() for line in lines]
+    else:
+        units = [part.strip() for part in _SENT_RE.split(" ".join(lines)) if part.strip()]
+    return _split_long_units(units)
+
+
+def _child_units(units: list[str]) -> list[str]:
+    """Merge tiny fragments and split oversized children into citable units."""
+    merged: list[str] = []
+    pending = ""
+    min_chars = max(1, settings.child_chunk_min_chars)
+    max_chars = max(min_chars, settings.child_chunk_max_chars)
+
+    for unit in _split_long_units(units, max_chars=max_chars):
+        if not pending:
+            pending = unit
+            continue
+        if len(pending) < min_chars and len(pending) + len(unit) + 1 <= max_chars:
+            pending = f"{pending} {unit}"
+            continue
+        merged.append(pending)
+        pending = unit
+
+    if pending:
+        if merged and len(pending) < min_chars and len(merged[-1]) + len(pending) + 1 <= max_chars:
+            merged[-1] = f"{merged[-1]} {pending}"
+        else:
+            merged.append(pending)
+    return merged
+
+
+def _split_long_units(units: list[str], max_chars: int | None = None) -> list[str]:
+    max_len = max_chars or settings.child_chunk_max_chars
+    out: list[str] = []
+    for unit in units:
+        clean = " ".join(unit.split())
+        if not clean:
+            continue
+        if len(clean) <= max_len:
+            out.append(clean)
+            continue
+        out.extend(_split_long_text(clean, max_len=max_len))
+    return out
+
+
+def _split_long_text(text: str, max_len: int) -> list[str]:
+    chunks: list[str] = []
+    words = text.split()
+    buf: list[str] = []
+    buf_len = 0
+    for word in words:
+        extra = len(word) + (1 if buf else 0)
+        if buf and buf_len + extra > max_len:
+            chunks.append(" ".join(buf))
+            buf, buf_len = [], 0
+        buf.append(word)
+        buf_len += extra
+    if buf:
+        chunks.append(" ".join(buf))
+    return chunks
 
 
 def make_meta(

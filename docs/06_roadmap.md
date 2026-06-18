@@ -2,7 +2,7 @@
 
 ## Implemented in the public pipeline
 
-- Parent-child chunking is implemented and tested: retrieval targets child passages, while parent blocks are retained for contextual reranking.
+- Parent-child chunking is implemented and tested: retrieval targets bounded child citation units, while paragraph-level parent blocks are retained for contextual reranking.
 - Hybrid retrieval is implemented and tested: dense Chroma order is fused with BM25 before cross-encoder reranking.
 - Optional HyDE retrieval is implemented with graceful fallback when the local/API LLM is unavailable.
 - Manifesto Project ingestion is connected to the official API workflow, with text fallback when original PDFs are blocked.
@@ -10,7 +10,7 @@
 
 ## Next research validation steps
 
-- Validate parent block size on pilot Manifesto documents and tune `COMPASS_PARENT_CHUNK_SIZE`.
+- Validate parent/child block sizes on pilot Manifesto documents and tune `COMPASS_PARENT_CHUNK_SIZE`, `COMPASS_CHILD_CHUNK_MIN_CHARS`, and `COMPASS_CHILD_CHUNK_MAX_CHARS`.
 - Evaluate HyDE retrieval against the hybrid dense+BM25 baseline through ablations.
 - Validate the political knowledge graph on annotated actor-relation examples.
 - Add multilingual preprocessing and language-aware segmentation.
