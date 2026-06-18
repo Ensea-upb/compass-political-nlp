@@ -9,11 +9,19 @@ User question
 -> ChatEngine
 -> CountryMemory.query_documents()
 -> cited evidence segments
+-> parent/general context retrieval
 -> local vLLM through compass.llm_client
 -> answer with [S1], [S2] citations
 ```
 
 If vLLM is not running, the engine returns an extractive answer from the retrieved passages instead of failing.
+
+The chat now separates two kinds of context:
+
+- cited evidence: short child segments used as proof and exposed as `[S1]`, `[S2]`;
+- general context: parent-level manifesto blocks used only to frame the answer.
+
+This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
 ## Install UI dependency
 
@@ -78,6 +86,8 @@ Expose port `7860` in the Onyxia service configuration if you want to open the U
 ## Expected Behavior
 
 When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages.
+
+The prompt also receives a separate `COMPASS general context` block. This block contains broader parent chunks from the same country, date filter, and party scope. It is background only: the model is explicitly instructed not to cite it and not to make claims that are absent from the cited evidence.
 
 The source block is designed for demos. It includes metadata, segment id, and a short excerpt:
 

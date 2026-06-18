@@ -44,6 +44,20 @@ class Citation:
     doc_date: str | None
     doc_type: str | None
     reliability: str | None
+    parent_text: str | None = None
+
+
+@dataclass(frozen=True)
+class GeneralContext:
+    """Broader, non-cited context used to frame evidence interpretation."""
+
+    ref_id: str
+    segment_id: str
+    text: str
+    country_iso3: str
+    party_id: str | None
+    doc_date: str | None
+    doc_type: str | None
 
 
 @dataclass(frozen=True)
@@ -55,6 +69,7 @@ class ChatResponse:
     model_used: str | None
     llm_used: bool
     retrieval_count: int
+    general_context: list[GeneralContext] = field(default_factory=list)
 
 
 class ChatEngine:
@@ -120,7 +135,10 @@ class ChatEngine:
                 llm_used=False,
                 retrieval_count=0,
             )
-        messages = build_messages(question, citations, request)
+        retrieved = attach_parent_context(self.memory, retrieved)
+        citations = build_citations(retrieved)
+        general_context = retrieve_general_context(self.memory, question, request, retrieved)
+        messages = build_messages(question, citations, request, general_context)
         try:
             answer = complete_chat(
                 self.model_name,
@@ -137,6 +155,7 @@ class ChatEngine:
                 model_used=self.model_name,
                 llm_used=True,
                 retrieval_count=len(retrieved),
+                general_context=general_context,
             )
         except Exception as exc:
             fallback = build_extractive_answer(question, citations, exc)
@@ -146,6 +165,7 @@ class ChatEngine:
                 model_used=self.model_name,
                 llm_used=False,
                 retrieval_count=len(retrieved),
+                general_context=general_context,
             )
 
 
@@ -164,24 +184,58 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
                 doc_date=_none_if_empty(meta.get("doc_date")),
                 doc_type=_none_if_empty(meta.get("doc_type")),
                 reliability=_none_if_empty(meta.get("reliability")),
+                parent_text=_none_if_empty(item.get("parent_text")),
             )
         )
     return citations
 
 
-def build_messages(question: str, citations: list[Citation], request: ChatRequest) -> list[dict[str, str]]:
-    context = "\n\n".join(
+def build_general_context_items(records: list[dict[str, Any]], limit: int = 3) -> list[GeneralContext]:
+    items: list[GeneralContext] = []
+    seen: set[str] = set()
+    for item in records:
+        segment_id = str(item.get("segment_id") or "")
+        if not segment_id or segment_id in seen:
+            continue
+        seen.add(segment_id)
+        meta = item.get("meta") or {}
+        items.append(
+            GeneralContext(
+                ref_id=f"C{len(items) + 1}",
+                segment_id=segment_id,
+                text=str(item.get("text") or ""),
+                country_iso3=str(meta.get("country_iso3") or ""),
+                party_id=_none_if_empty(meta.get("party_id")),
+                doc_date=_none_if_empty(meta.get("doc_date")),
+                doc_type=_none_if_empty(meta.get("doc_type")),
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def build_messages(
+    question: str,
+    citations: list[Citation],
+    request: ChatRequest,
+    general_context: list[GeneralContext] | None = None,
+) -> list[dict[str, str]]:
+    evidence_context = "\n\n".join(
         f"[{citation.ref_id}] "
         f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
         f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
         f"reliability={citation.reliability or 'unknown'}\n"
+        f"local_parent_context={_compact_parent_context(citation)}\n"
         f"{citation.text}"
         for citation in citations
     )
+    general_context_text = format_general_context_for_prompt(general_context or [])
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
         "Answer only from the provided COMPASS evidence. Every substantive claim must end with an inline citation like [S1] or [S2]. "
+        "Use the COMPASS general context only to understand the document frame; do not cite it as evidence and do not make claims that are absent from cited evidence. "
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
         "Do not infer motives, psychology, or hidden positions beyond the passages. "
         "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
@@ -191,9 +245,87 @@ def build_messages(question: str, citations: list[Citation], request: ChatReques
     scope = f"as_of={request.as_of.isoformat()}"
     if request.party_id:
         scope += f", party_id={request.party_id}"
-    user = f"Scope: {scope}\n\nQuestion: {question}\n\nCOMPASS evidence:\n{context}"
+    user = (
+        f"Scope: {scope}\n\n"
+        f"Question: {question}\n\n"
+        f"COMPASS general context (background only, not citation evidence):\n{general_context_text}\n\n"
+        f"COMPASS cited evidence:\n{evidence_context}"
+    )
     history = compact_history(request.history)
     return [{"role": "system", "content": system}, *history, {"role": "user", "content": user}]
+
+
+def attach_parent_context(memory: Any, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add parent chunk text to retrieved child records when available."""
+    parent_ids = list({
+        (record.get("meta") or {}).get("parent_segment_id", "")
+        for record in records
+        if (record.get("meta") or {}).get("parent_segment_id")
+    })
+    if not parent_ids or not hasattr(memory, "fetch_by_ids"):
+        return records
+    try:
+        parent_texts = memory.fetch_by_ids(parent_ids)
+    except Exception:
+        return records
+    enriched: list[dict[str, Any]] = []
+    for record in records:
+        item = dict(record)
+        parent_id = (item.get("meta") or {}).get("parent_segment_id", "")
+        if parent_id and parent_id in parent_texts:
+            item["parent_text"] = parent_texts[parent_id]
+        enriched.append(item)
+    return enriched
+
+
+def retrieve_general_context(
+    memory: Any,
+    question: str,
+    request: ChatRequest,
+    evidence_records: list[dict[str, Any]],
+) -> list[GeneralContext]:
+    """Retrieve broad parent-level context without mixing it into citations."""
+    try:
+        records = memory.query_documents(
+            build_general_context_query(question),
+            as_of=request.as_of,
+            k=3,
+            party_id=request.party_id,
+            include_unverified=request.include_unverified,
+            include_parent_segments=True,
+        )
+    except TypeError:
+        return build_general_context_items(evidence_records, limit=2)
+    except Exception:
+        return build_general_context_items(evidence_records, limit=2)
+    return build_general_context_items(records, limit=3)
+
+
+def build_general_context_query(question: str) -> str:
+    return (
+        f"{question} manifesto overall political program party priorities "
+        "general orientation policy agenda election platform"
+    )
+
+
+def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
+    if not items:
+        return "No separate general context retrieved."
+    lines = []
+    for item in items:
+        lines.append(
+            f"[{item.ref_id}] country={item.country_iso3 or 'unknown'} "
+            f"party={item.party_id or 'unknown'} date={item.doc_date or 'unknown'} "
+            f"type={item.doc_type or 'unknown'} segment={item.segment_id}\n"
+            f"{_excerpt(item.text, max_chars=650)}"
+        )
+    return "\n\n".join(lines)
+
+
+def _compact_parent_context(citation: Citation) -> str:
+    if not citation.parent_text:
+        return "none"
+    return _excerpt(citation.parent_text, max_chars=450)
 
 
 def extract_segment_ids(text: str) -> list[str]:

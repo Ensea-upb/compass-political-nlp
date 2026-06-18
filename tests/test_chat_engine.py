@@ -4,11 +4,13 @@ import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
 from compass.chat.engine import (
     build_citations,
+    build_general_context_items,
     build_messages,
     build_retrieval_query,
     compact_history,
     extract_segment_ids,
     format_citations,
+    format_general_context_for_prompt,
     infer_answer_language,
     strip_appended_sources,
 )
@@ -114,6 +116,7 @@ def test_chat_prompt_requires_evidence_linked_claims():
     system = messages[0]["content"]
     assert "Every substantive claim" in system
     assert "Do not overinterpret" in system
+    assert "COMPASS general context" in messages[-1]["content"]
 
 
 def test_strip_appended_sources_removes_model_bibliography():
@@ -175,3 +178,81 @@ def test_economic_retrieval_query_adds_priority_terms():
     assert "employment" in query
     assert "wages" in query
     assert "innovation" in query
+
+
+def test_general_context_is_added_without_becoming_cited_evidence(monkeypatch):
+    class MemoryWithGeneralContext:
+        def __init__(self):
+            self.queries = []
+
+        def query_documents(self, question, as_of, k=12, party_id=None, include_unverified=False, include_parent_segments=False):
+            self.queries.append((question, include_parent_segments))
+            if include_parent_segments:
+                return [
+                    {
+                        "segment_id": "doc1:p000",
+                        "text": "Overall manifesto context: the party frames its program around democratic renewal.",
+                        "meta": {
+                            "doc_id": "doc1",
+                            "country_iso3": "DEU",
+                            "party_id": "41320",
+                            "doc_date": "2009-09-01",
+                            "doc_type": "manifesto_api_text",
+                            "reliability": "official",
+                        },
+                    }
+                ]
+            return [
+                {
+                    "segment_id": "doc1:p000c000",
+                    "text": "The party supports democratic accountability.",
+                    "meta": {
+                        "doc_id": "doc1",
+                        "country_iso3": "DEU",
+                        "party_id": "41320",
+                        "doc_date": "2009-09-01",
+                        "doc_type": "manifesto_api_text",
+                        "reliability": "official",
+                        "parent_segment_id": "doc1:p000",
+                    },
+                }
+            ]
+
+        def fetch_by_ids(self, segment_ids):
+            return {"doc1:p000": "Parent context: democracy is one theme in the manifesto section."}
+
+    seen = {}
+
+    def fake_complete(model_name, messages, **kwargs):
+        seen["prompt"] = messages[-1]["content"]
+        return "The party supports democratic accountability [S1]."
+
+    memory = MemoryWithGeneralContext()
+    monkeypatch.setattr(chat_engine, "complete_chat", fake_complete)
+    response = ChatEngine(memory, model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320")
+    )
+
+    assert response.llm_used is True
+    assert response.general_context[0].segment_id == "doc1:p000"
+    assert any(include_parent for _, include_parent in memory.queries)
+    assert "COMPASS general context" in seen["prompt"]
+    assert "local_parent_context=Parent context" in seen["prompt"]
+    assert response.citations[0].segment_id == "doc1:p000c000"
+
+
+def test_general_context_format_is_background_only():
+    context = build_general_context_items(
+        [
+            {
+                "segment_id": "doc1:p000",
+                "text": "Overall program context.",
+                "meta": {"country_iso3": "DEU", "party_id": "41320", "doc_date": "2009-09-01", "doc_type": "manifesto_api_text"},
+            }
+        ]
+    )
+
+    formatted = format_general_context_for_prompt(context)
+
+    assert "[C1]" in formatted
+    assert "segment=doc1:p000" in formatted
