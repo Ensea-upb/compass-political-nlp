@@ -20,6 +20,7 @@ Révision post-audit (2026-06-12) :
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -27,6 +28,11 @@ from pathlib import Path
 import chromadb
 import pandas as pd
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+try:
+    from rank_bm25 import BM25Okapi
+except ModuleNotFoundError:  # pragma: no cover - exercised in lightweight installs
+    BM25Okapi = None
 
 from compass.config import settings
 from compass.schemas import Segment
@@ -200,12 +206,128 @@ class CountryMemory:
             for i, d, m in zip(res["ids"][0], res["documents"][0], res["metadatas"][0])
         ]
 
+    def query_documents_hybrid(
+        self, question: str, as_of: date, k: int = 12,
+        party_id: str | None = None, include_unverified: bool = False,
+        include_parent_segments: bool = False,
+    ) -> list[dict]:
+        """Dense Chroma retrieval fused with BM25 lexical ranking.
+
+        This is the default retrieval shape expected by COMPASS Chat: dense
+        semantic ordering gives recall, BM25 reinforces exact political terms,
+        and parent chunks remain available through ``parent_segment_id``.
+        """
+        clauses = self._document_clauses(
+            as_of=as_of,
+            party_id=party_id,
+            include_unverified=include_unverified,
+            include_parent_segments=include_parent_segments,
+        )
+        dense = self.query_documents(
+            question,
+            as_of=as_of,
+            k=max(k * 4, 24),
+            party_id=party_id,
+            include_unverified=include_unverified,
+            include_parent_segments=include_parent_segments,
+        )
+        lexical_pool = self._get_records(clauses, limit=max(k * 40, 200))
+        if not lexical_pool:
+            return dense[:k]
+        candidates = _dedupe_records(dense + lexical_pool)
+        return _hybrid_rank(question, candidates, dense, k=k)
+
     def _query_chroma(self, question: str, k: int, clauses: list[dict]) -> dict:
         where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         return self._col.query(query_texts=[question], n_results=k, where=where)
+
+    def _document_clauses(
+        self,
+        *,
+        as_of: date,
+        party_id: str | None,
+        include_unverified: bool,
+        include_parent_segments: bool,
+    ) -> list[dict]:
+        clauses: list[dict] = [{"doc_date_ord": {"$lte": as_of.toordinal()}}]
+        if not include_unverified:
+            clauses.append({"temporal_ok": 1})
+        if party_id:
+            clauses.append({"party_id": party_id})
+        if not include_parent_segments:
+            clauses.append({"segment_level": "child"})
+        return clauses
+
+    def _get_records(self, clauses: list[dict], limit: int) -> list[dict]:
+        where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        try:
+            res = self._col.get(where=where, include=["documents", "metadatas"], limit=limit)
+        except TypeError:
+            try:
+                res = self._col.get(where=where, include=["documents", "metadatas"])
+            except Exception:
+                return []
+        except Exception:
+            return []
+        metadatas = res.get("metadatas") or [{} for _ in res.get("ids", [])]
+        return [
+            {"segment_id": sid, "text": doc, "meta": meta or {}}
+            for sid, doc, meta in zip(res.get("ids", []), res.get("documents", []), metadatas)
+        ]
 
 
 def _has_results(result: dict) -> bool:
     ids = result.get("ids") or []
     return bool(ids and ids[0])
+
+
+def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: int) -> list[dict]:
+    query_tokens = _tokens(question)
+    dense_rank = {item["segment_id"]: rank for rank, item in enumerate(dense, start=1)}
+    bm25_rank: dict[str, int] = {}
+    if query_tokens and candidates and BM25Okapi is not None:
+        scores = BM25Okapi([_tokens(item.get("text", "")) for item in candidates]).get_scores(query_tokens)
+        order = sorted(range(len(candidates)), key=lambda idx: float(scores[idx]), reverse=True)
+        bm25_rank = {candidates[idx]["segment_id"]: rank for rank, idx in enumerate(order, start=1)}
+    elif query_tokens and candidates:
+        scores = [_lexical_overlap(query_tokens, item.get("text", "")) for item in candidates]
+        order = sorted(range(len(candidates)), key=lambda idx: float(scores[idx]), reverse=True)
+        bm25_rank = {candidates[idx]["segment_id"]: rank for rank, idx in enumerate(order, start=1)}
+    ranked = []
+    for item in candidates:
+        sid = item["segment_id"]
+        score = 0.0
+        if sid in dense_rank:
+            score += 1.0 / (60 + dense_rank[sid])
+        if sid in bm25_rank:
+            score += 1.25 / (60 + bm25_rank[sid])
+        enriched = dict(item)
+        enriched["hybrid_score"] = score
+        enriched["dense_rank"] = dense_rank.get(sid)
+        enriched["bm25_rank"] = bm25_rank.get(sid)
+        ranked.append(enriched)
+    return sorted(ranked, key=lambda item: float(item.get("hybrid_score") or 0.0), reverse=True)[:k]
+
+
+def _dedupe_records(records: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    out: list[dict] = []
+    for record in records:
+        sid = str(record.get("segment_id") or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        out.append(record)
+    return out
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text.lower())
+
+
+def _lexical_overlap(query_tokens: list[str], text: str) -> float:
+    text_tokens = set(_tokens(text))
+    if not text_tokens:
+        return 0.0
+    return float(sum(1 for token in query_tokens if token in text_tokens))
 

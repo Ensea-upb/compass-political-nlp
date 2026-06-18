@@ -197,6 +197,9 @@ class DocumentPipeline:
                 _flush_parent()
                 buf, buf_len = [], 0
             for unit in paragraph:
+                if _semantic_parent_break(buf, unit, buf_len):
+                    _flush_parent()
+                    buf, buf_len = [], 0
                 if buf and buf_len + len(unit) > settings.parent_chunk_size:
                     _flush_parent()
                     buf, buf_len = [], 0
@@ -291,6 +294,38 @@ def _split_long_text(text: str, max_len: int) -> list[str]:
     if buf:
         chunks.append(" ".join(buf))
     return chunks
+
+
+def _semantic_parent_break(buf: list[str], next_unit: str, buf_len: int) -> bool:
+    """Start a new parent when adjacent units are weakly related.
+
+    This is a lightweight semantic chunking layer: it preserves the deterministic
+    public pipeline while avoiding arbitrary parent boundaries inside manifesto
+    sections. The signal is lexical cohesion, not a heavy embedding model.
+    """
+    if not settings.semantic_chunking_enabled or not buf:
+        return False
+    min_parent = max(settings.child_chunk_min_chars, int(settings.parent_chunk_size * 0.35))
+    if buf_len < min_parent:
+        return False
+    similarity = _token_jaccard(" ".join(buf[-2:]), next_unit)
+    return similarity < settings.semantic_chunk_similarity_threshold
+
+
+def _token_jaccard(left: str, right: str) -> float:
+    left_tokens = set(_semantic_tokens(left))
+    right_tokens = set(_semantic_tokens(right))
+    if not left_tokens or not right_tokens:
+        return 1.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _semantic_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[\w']+", text.lower())
+        if len(token) > 3
+    ]
 
 
 def make_meta(

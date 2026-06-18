@@ -34,6 +34,15 @@ class FakeMemory:
         ]
 
 
+class HybridMemory(FakeMemory):
+    def __init__(self):
+        self.hybrid_called = False
+
+    def query_documents_hybrid(self, question, as_of, k=12, party_id=None, include_unverified=False):
+        self.hybrid_called = True
+        return super().query_documents(question, as_of, k, party_id, include_unverified)
+
+
 def test_chat_engine_uses_llm_and_returns_citations(monkeypatch):
     def fake_complete(model_name, messages, **kwargs):
         assert "democracy" in messages[-1]["content"]
@@ -48,6 +57,20 @@ def test_chat_engine_uses_llm_and_returns_citations(monkeypatch):
     assert response.model_used == "local-test-model"
     assert response.citations[0].ref_id == "S1"
     assert "[S1]" in response.answer
+    assert response.prompt_messages
+
+
+def test_chat_engine_prefers_hybrid_retrieval(monkeypatch):
+    def fake_complete(model_name, messages, **kwargs):
+        return "The party supports democratic accountability [S1]."
+
+    memory = HybridMemory()
+    monkeypatch.setattr(chat_engine, "complete_chat", fake_complete)
+    ChatEngine(memory, model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320")
+    )
+
+    assert memory.hybrid_called is True
 
 
 def test_chat_engine_falls_back_when_llm_fails(monkeypatch):

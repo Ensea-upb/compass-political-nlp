@@ -8,8 +8,10 @@ Gradio prototype.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
+import uuid
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,10 +72,20 @@ HTML = """<!doctype html>
     const send = document.getElementById('send');
     const history = [];
 
-    function addMessage(role, text, cls) {
+    function addMessage(role, text, cls, promptUrl) {
       const div = document.createElement('div');
       div.className = 'msg ' + (cls || role);
       div.textContent = text;
+      if (promptUrl) {
+        const link = document.createElement('a');
+        link.href = promptUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Voir le prompt LLM';
+        div.appendChild(document.createElement('br'));
+        div.appendChild(document.createElement('br'));
+        div.appendChild(link);
+      }
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
@@ -102,7 +114,7 @@ HTML = """<!doctype html>
         if (!response.ok || payload.error) {
           throw new Error(payload.error || ('HTTP ' + response.status));
         }
-        addMessage('assistant', payload.answer);
+        addMessage('assistant', payload.answer, 'assistant', payload.prompt_url);
         history.push({role: 'assistant', content: payload.answer});
       } catch (err) {
         addMessage('assistant', 'Erreur COMPASS Chat: ' + err.message, 'error');
@@ -132,10 +144,15 @@ def main() -> None:
     cutoff = date.fromisoformat(args.as_of)
     engine = ChatEngine(CountryMemory(args.country))
     scope = f"Corpus: {args.country.upper()} | as_of={cutoff.isoformat()} | party={args.party or 'all'}"
+    prompt_store: dict[str, list[dict[str, str]]] = {}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if urlparse(self.path).path not in {"/", "/index.html"}:
+            path = urlparse(self.path).path
+            if path.startswith("/prompt/"):
+                self._send_prompt_page(path.removeprefix("/prompt/"))
+                return
+            if path not in {"/", "/index.html"}:
                 self._send_json({"error": "not found"}, status=404)
                 return
             html = HTML.replace("__SCOPE__", scope)
@@ -155,15 +172,16 @@ def main() -> None:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 question = str(payload.get("question") or "").strip()
                 history = payload.get("history") if isinstance(payload.get("history"), list) else []
-                answer = answer_question(
+                payload_out = answer_question_payload(
                     engine=engine,
                     question=question,
                     history=history,
                     cutoff=cutoff,
                     party_id=args.party,
                     k=args.k,
+                    prompt_store=prompt_store,
                 )
-                self._send_json({"answer": answer})
+                self._send_json(payload_out)
             except Exception as exc:
                 self._send_json({"error": f"{type(exc).__name__}: {exc}"}, status=500)
 
@@ -174,6 +192,29 @@ def main() -> None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_prompt_page(self, prompt_id: str) -> None:
+            messages = prompt_store.get(prompt_id)
+            if messages is None:
+                self._send_json({"error": "prompt not found"}, status=404)
+                return
+            body = html.escape(json.dumps(messages, ensure_ascii=False, indent=2))
+            page = (
+                "<!doctype html><html><head><meta charset='utf-8'>"
+                "<title>COMPASS LLM Prompt</title>"
+                "<style>body{font-family:ui-monospace,Consolas,monospace;background:#101113;color:#f4f4f5;"
+                "padding:24px;} pre{white-space:pre-wrap;line-height:1.45;background:#17191d;border:1px solid #30343a;"
+                "padding:16px;border-radius:8px;}</style></head><body>"
+                "<h1>COMPASS LLM Prompt</h1><pre>"
+                + body
+                + "</pre></body></html>"
+            )
+            data = page.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -193,12 +234,32 @@ def answer_question(
     party_id: str | None,
     k: int,
 ) -> str:
+    return answer_question_payload(
+        engine=engine,
+        question=question,
+        history=history,
+        cutoff=cutoff,
+        party_id=party_id,
+        k=k,
+    )["answer"]
+
+
+def answer_question_payload(
+    *,
+    engine: ChatEngine,
+    question: str,
+    history: list[dict[str, str]],
+    cutoff: date,
+    party_id: str | None,
+    k: int,
+    prompt_store: dict[str, list[dict[str, str]]] | None = None,
+) -> dict[str, str]:
     if is_greeting(question):
-        return "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexe."
+        return {"answer": "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexe."}
     if is_source_followup(question):
         sources = latest_sources_from_history(history)
         if sources:
-            return "Voici les sources utilisees dans ma reponse precedente :\n\n" + sources
+            return {"answer": "Voici les sources utilisees dans ma reponse precedente :\n\n" + sources}
     response = engine.ask(
         ChatRequest(
             question=question,
@@ -208,7 +269,13 @@ def answer_question(
             history=history,
         )
     )
-    return response.answer + "\n\nSources\n" + format_citations(response.citations)
+    answer = response.answer + "\n\nSources\n" + format_citations(response.citations)
+    payload = {"answer": answer}
+    if prompt_store is not None and response.prompt_messages:
+        prompt_id = uuid.uuid4().hex
+        prompt_store[prompt_id] = response.prompt_messages
+        payload["prompt_url"] = f"./prompt/{prompt_id}"
+    return payload
 
 
 def is_greeting(message: str) -> bool:

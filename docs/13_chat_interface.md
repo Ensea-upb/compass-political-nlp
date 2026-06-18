@@ -7,11 +7,13 @@ COMPASS Chat is an optional conversational layer over the existing COMPASS memor
 ```text
 User question
 -> ChatEngine
--> CountryMemory.query_documents()
+-> CountryMemory.query_documents_hybrid()
+-> dense retrieval + BM25 fusion
 -> cited evidence segments
 -> parent/general context retrieval
 -> local vLLM through compass.llm_client
 -> answer with [S1], [S2] citations
+-> inspectable prompt link
 ```
 
 If vLLM is not running, the engine returns an extractive answer from the retrieved passages instead of failing.
@@ -23,7 +25,9 @@ The chat now separates two kinds of context:
 
 This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
-The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text and splits oversized fragments. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
+The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text, splits oversized fragments, and can start new parent blocks when semantic cohesion drops. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
+
+After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens a local inspection page containing the exact message list sent to the OpenAI-compatible vLLM endpoint. This is for demonstration and auditability; source documents and secret keys are not added to that page beyond the prompt content already sent to the model.
 
 For small local vLLM models, the chat also applies a prompt budget:
 

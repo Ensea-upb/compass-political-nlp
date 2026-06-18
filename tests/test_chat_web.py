@@ -1,6 +1,6 @@
 from datetime import date
 
-from apps.chat_web import answer_question, is_greeting, is_source_followup, latest_sources_from_history
+from apps.chat_web import answer_question, answer_question_payload, is_greeting, is_source_followup, latest_sources_from_history
 
 
 class DummyEngine:
@@ -8,6 +8,7 @@ class DummyEngine:
         class Response:
             answer = "Evidence-based answer [S1]."
             citations = []
+            prompt_messages = [{"role": "user", "content": "prompt"}]
         return Response()
 
 
@@ -44,6 +45,23 @@ def test_chat_web_answer_question_calls_engine():
     assert "Sources" in answer
 
 
+def test_chat_web_payload_adds_prompt_link():
+    store = {}
+
+    payload = answer_question_payload(
+        engine=DummyEngine(),
+        question="What about democracy?",
+        history=[],
+        cutoff=date(2009, 9, 27),
+        party_id="41320",
+        k=8,
+        prompt_store=store,
+    )
+
+    assert payload["prompt_url"].startswith("./prompt/")
+    assert store
+
+
 def test_chat_web_reuses_last_sources_for_followup():
     history = [
         {"role": "user", "content": "What about democracy?"},
@@ -75,3 +93,5 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "fetch('./ask'" in HTML
     assert "fetch('/ask'" not in HTML
     assert "Non-JSON response from server" in HTML
+    assert "prompt_url" in HTML
+    assert "Voir le prompt LLM" in HTML

@@ -154,6 +154,8 @@ class CompassSettings(LLMConfig):
     # avec leurs voisins pour éviter des preuves du type "Setting impulses.".
     child_chunk_min_chars: int = 60
     child_chunk_max_chars: int = 650
+    semantic_chunking_enabled: bool = True
+    semantic_chunk_similarity_threshold: float = 0.08
 
     # --- Graphe de connaissances politiques (C02b, Gap 3) ---
     graph_path: Path = Path("data/political_graph.graphml")

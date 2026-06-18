@@ -167,6 +167,27 @@ class TestGap1_HierarchicalChunking:
         assert len(children) > 1
         assert all(len(child.text) <= 80 for child in children)
 
+    def test_semantic_chunking_splits_topic_shifts(self, monkeypatch):
+        from compass import document_pipeline as dp
+
+        monkeypatch.setattr(dp.settings, "semantic_chunking_enabled", True)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_similarity_threshold", 0.2)
+        monkeypatch.setattr(dp.settings, "child_chunk_min_chars", 20)
+        monkeypatch.setattr(dp.settings, "parent_chunk_size", 300)
+        text = (
+            "Democratic accountability protects parliament and public oversight. "
+            "Transparent elections protect parliament and democratic oversight. "
+            "Solar infrastructure expands renewable energy and grid capacity. "
+            "Renewable energy investment expands clean grid capacity."
+        )
+
+        segs = self.p._finalize(text, _meta(doc_id="d8"))
+        parents = [s for s in segs if s.parent_segment_id is None]
+
+        assert len(parents) >= 2
+        assert "Democratic accountability" in parents[0].text
+        assert any("Solar infrastructure" in parent.text for parent in parents[1:])
+
     def test_country_memory_marks_parent_and_child_levels(self):
         from tests.conftest import CHROMA_COL
 
@@ -201,6 +222,29 @@ class TestGap1_HierarchicalChunking:
         assert {"segment_level": "child"} not in second_where["$and"]
         assert result[0]["segment_id"] == "legacy:p000"
         CHROMA_COL.query.side_effect = None
+
+    def test_query_documents_hybrid_fuses_dense_and_bm25(self):
+        from tests.conftest import CHROMA_COL
+
+        memory = _country_memory()
+        CHROMA_COL.query.reset_mock()
+        CHROMA_COL.get.reset_mock()
+        CHROMA_COL.query.return_value = {
+            "ids": [["dense:p000c000"]],
+            "documents": [["General democracy text."]],
+            "metadatas": [[{"party_id": "pd_sen", "segment_level": "child"}]],
+        }
+        CHROMA_COL.get.return_value = {
+            "ids": ["lex:p000c000"],
+            "documents": ["democracy parliament accountability"],
+            "metadatas": [{"party_id": "pd_sen", "segment_level": "child"}],
+        }
+
+        result = memory.query_documents_hybrid("democracy accountability", as_of=date(2024, 3, 24), party_id="pd_sen", k=2)
+
+        assert len(result) == 2
+        assert {item["segment_id"] for item in result} == {"dense:p000c000", "lex:p000c000"}
+        assert all("hybrid_score" in item for item in result)
 
 
 # ══════════════════════════════════════════════════════════════════════════

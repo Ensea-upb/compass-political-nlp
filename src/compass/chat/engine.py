@@ -78,6 +78,7 @@ class ChatResponse:
     llm_used: bool
     retrieval_count: int
     general_context: list[GeneralContext] = field(default_factory=list)
+    prompt_messages: list[dict[str, str]] = field(default_factory=list)
 
 
 class ChatEngine:
@@ -127,7 +128,8 @@ class ChatEngine:
         segment_ids = extract_segment_ids(question)
         if segment_ids:
             return self._answer_segment_lookup(question, segment_ids)
-        retrieved = self.memory.query_documents(
+        retrieved = query_evidence(
+            self.memory,
             build_retrieval_query(question),
             as_of=request.as_of,
             k=request.k,
@@ -164,6 +166,7 @@ class ChatEngine:
                 llm_used=True,
                 retrieval_count=len(retrieved),
                 general_context=general_context,
+                prompt_messages=messages,
             )
         except Exception as exc:
             fallback = build_extractive_answer(question, citations, exc)
@@ -174,7 +177,35 @@ class ChatEngine:
                 llm_used=False,
                 retrieval_count=len(retrieved),
                 general_context=general_context,
+                prompt_messages=messages,
             )
+
+
+def query_evidence(
+    memory: Any,
+    question: str,
+    *,
+    as_of: date,
+    k: int,
+    party_id: str | None,
+    include_unverified: bool,
+) -> list[dict[str, Any]]:
+    """Use the production retrieval stack: dense + BM25 when available."""
+    if hasattr(memory, "query_documents_hybrid"):
+        return memory.query_documents_hybrid(
+            question,
+            as_of=as_of,
+            k=k,
+            party_id=party_id,
+            include_unverified=include_unverified,
+        )
+    return memory.query_documents(
+        question,
+        as_of=as_of,
+        k=k,
+        party_id=party_id,
+        include_unverified=include_unverified,
+    )
 
 
 def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
