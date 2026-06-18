@@ -127,6 +127,41 @@ class TestGap1_HierarchicalChunking:
         segs = self.p._finalize("Une seule phrase courte.", _meta(doc_id="d4"))
         assert len(segs) >= 1
 
+    def test_country_memory_marks_parent_and_child_levels(self):
+        from tests.conftest import CHROMA_COL
+
+        CHROMA_COL.upsert.reset_mock()
+        memory = _country_memory()
+        segments = [
+            _seg("Bloc parent.", seg_id="doc:p000", parent_id=None),
+            _seg("Phrase enfant.", seg_id="doc:p000c000", parent_id="doc:p000"),
+        ]
+
+        memory.add_documents(segments)
+
+        metadatas = CHROMA_COL.upsert.call_args.kwargs["metadatas"]
+        assert metadatas[0]["segment_level"] == "parent"
+        assert metadatas[1]["segment_level"] == "child"
+
+    def test_query_documents_targets_children_then_falls_back_for_old_indexes(self):
+        from tests.conftest import CHROMA_COL
+
+        memory = _country_memory()
+        CHROMA_COL.query.reset_mock()
+        CHROMA_COL.query.side_effect = [
+            {"ids": [[]], "documents": [[]], "metadatas": [[]]},
+            {"ids": [["legacy:p000"]], "documents": [["Ancien segment."]], "metadatas": [[{"party_id": "pd_sen"}]]},
+        ]
+
+        result = memory.query_documents("pluralisme", as_of=date(2024, 3, 24), party_id="pd_sen")
+
+        first_where = CHROMA_COL.query.call_args_list[0].kwargs["where"]
+        second_where = CHROMA_COL.query.call_args_list[1].kwargs["where"]
+        assert {"segment_level": "child"} in first_where["$and"]
+        assert {"segment_level": "child"} not in second_where["$and"]
+        assert result[0]["segment_id"] == "legacy:p000"
+        CHROMA_COL.query.side_effect = None
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Gap 2 — HyDE dans C06
@@ -229,6 +264,31 @@ class TestGap2_HyDE:
         assert sh.definition in q
         for src in sh.required_sources:
             assert src in q
+
+    def test_hybrid_select_combines_dense_order_and_bm25_signal(self, monkeypatch):
+        from compass import internal_retrieval
+        from compass.internal_retrieval import InternalRetriever
+
+        class FakeBM25:
+            def __init__(self, corpus):
+                self.corpus = corpus
+
+            def get_scores(self, query_tokens):
+                return [0.0, 20.0, 0.0]
+
+        monkeypatch.setattr(internal_retrieval, "BM25Okapi", FakeBM25)
+        pool = [
+            {"segment_id": "dense-1", "text": "institutional reform"},
+            {"segment_id": "lexical-hit", "text": "pluralisme politique et partis"},
+            {"segment_id": "dense-3", "text": "economic investment"},
+        ]
+
+        selected = InternalRetriever._hybrid_select(pool, "pluralisme politique", limit=2)
+
+        assert selected[0]["segment_id"] == "lexical-hit"
+        assert "dense_rank" in selected[0]
+        assert "bm25_score" in selected[0]
+        assert "hybrid_score" in selected[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════

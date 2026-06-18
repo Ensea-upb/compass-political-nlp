@@ -133,6 +133,7 @@ class CountryMemory:
                 "country_iso3": s.meta.country_iso3,
                 # Gap 1 — chunking hiérarchique : lien enfant → parent
                 "parent_segment_id": s.parent_segment_id or "",
+                "segment_level": "child" if s.parent_segment_id else "parent",
             } for s in segments],
         )
 
@@ -154,6 +155,7 @@ class CountryMemory:
     def query_documents(
         self, question: str, as_of: date, k: int = 12,
         party_id: str | None = None, include_unverified: bool = False,
+        include_parent_segments: bool = False,
     ) -> list[dict]:
         """Recherche documentaire SOUS CONTRAINTE TEMPORELLE STRICTE.
 
@@ -161,16 +163,34 @@ class CountryMemory:
             as_of: borne temporelle obligatoire (date de l'élection).
             include_unverified: True UNIQUEMENT pour orienter une enquête
                 (C08) — jamais pour produire des preuves (P0-2).
+            include_parent_segments: True uniquement pour diagnostics techniques.
+                Le retrieval normal interroge les enfants et récupère les parents
+                ensuite par ``fetch_by_ids`` pour éviter de citer des blocs longs
+                comme preuves directes.
         """
         clauses: list[dict] = [{"doc_date_ord": {"$lte": as_of.toordinal()}}]
         if not include_unverified:
             clauses.append({"temporal_ok": 1})
         if party_id:
             clauses.append({"party_id": party_id})
-        where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
-        res = self._col.query(query_texts=[question], n_results=k, where=where)
+        if not include_parent_segments:
+            clauses.append({"segment_level": "child"})
+        res = self._query_chroma(question, k, clauses)
+        if not _has_results(res) and not include_parent_segments:
+            # Backward compatibility with indexes created before segment_level.
+            fallback = [c for c in clauses if "segment_level" not in c]
+            res = self._query_chroma(question, k, fallback)
         return [
             {"segment_id": i, "text": d, "meta": m}
             for i, d, m in zip(res["ids"][0], res["documents"][0], res["metadatas"][0])
         ]
+
+    def _query_chroma(self, question: str, k: int, clauses: list[dict]) -> dict:
+        where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        return self._col.query(query_texts=[question], n_results=k, where=where)
+
+
+def _has_results(result: dict) -> bool:
+    ids = result.get("ids") or []
+    return bool(ids and ids[0])
 

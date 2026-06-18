@@ -20,6 +20,7 @@ HyDE ancre sur la fiche -- logique metier de quelques dizaines de lignes.
 from __future__ import annotations
 
 import logging
+import re
 
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
@@ -89,13 +90,8 @@ class InternalRetriever:
                 sheet.variable_id, len(new_extras), len(pool),
             )
 
-        # --- Etape 2 : BM25 sur le pool elargi ---
-        corpus_tokens = [p["text"].lower().split() for p in pool]
-        bm25 = BM25Okapi(corpus_tokens)
-        scores = bm25.get_scores(query.lower().split())
-        candidates = [
-            p for _, p in sorted(zip(scores, pool), key=lambda x: x[0], reverse=True)
-        ][:30]
+        # --- Etape 2 : hybride dense + BM25 sur le pool elargi ---
+        candidates = self._hybrid_select(pool, query, limit=30)
 
         # --- Etape 3 : enrichissement parent ---
         candidates = self._inject_parent_text(candidates)
@@ -210,7 +206,45 @@ class InternalRetriever:
     # ------------------------------------------------------------------ requete
     @staticmethod
     def _build_query(sheet: VariableSheet) -> str:
-        """La requete vient de la fiche : question + definition + sources requises."""
+        """La requete vient de la fiche : question + definition + criteres."""
+        scale = " ".join(str(v) for v in sheet.scale.values())
         return " ".join(
-            [sheet.question, sheet.definition, " ".join(sheet.required_sources)]
+            [
+                sheet.question,
+                sheet.definition,
+                " ".join(sheet.required_sources),
+                " ".join(sheet.inclusion_criteria),
+                " ".join(sheet.exclusion_criteria),
+                scale,
+            ]
         )
+
+    @staticmethod
+    def _hybrid_select(pool: list[dict], query: str, limit: int = 30) -> list[dict]:
+        """Combine l'ordre dense Chroma et BM25 par reciprocal rank fusion.
+
+        ``pool`` arrive déjà classé par ChromaDB pour les passages issus des
+        mémoires. BM25 ajoute un signal lexical robuste pour les termes de
+        registre, codes, institutions et noms propres.
+        """
+        if not pool:
+            return []
+        query_tokens = _tokens(query)
+        corpus_tokens = [_tokens(p.get("text", "")) for p in pool]
+        bm25_scores = BM25Okapi(corpus_tokens).get_scores(query_tokens) if query_tokens else [0.0] * len(pool)
+        bm25_order = sorted(range(len(pool)), key=lambda i: float(bm25_scores[i]), reverse=True)
+        bm25_rank = {idx: rank for rank, idx in enumerate(bm25_order, start=1)}
+        ranked: list[tuple[float, dict]] = []
+        for dense_rank, item in enumerate(pool, start=1):
+            idx = dense_rank - 1
+            score = (1.0 / (60 + dense_rank)) + (1.25 / (60 + bm25_rank[idx]))
+            enriched = dict(item)
+            enriched["dense_rank"] = dense_rank
+            enriched["bm25_score"] = float(bm25_scores[idx])
+            enriched["hybrid_score"] = score
+            ranked.append((score, enriched))
+        return [item for _, item in sorted(ranked, key=lambda x: x[0], reverse=True)[:limit]]
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[\w']+", text.lower())

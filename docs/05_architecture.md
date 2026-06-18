@@ -35,6 +35,7 @@ This separation keeps the public demo lightweight while preserving the real rese
 
 Recent integration work adds three research-oriented improvements:
 
-- parent-child chunking in `document_pipeline.py`, so retrieval can rank short passages while retaining their broader parent context;
+- parent-child chunking in `document_pipeline.py` and `country_memory.py`: child segments are retrieved and cited as evidence, while parent blocks are kept in the index for contextual injection during reranking;
+- hybrid retrieval in `internal_retrieval.py`: Chroma's dense ordering is fused with BM25 lexical ranking before cross-encoder reranking, then parent context is injected for each child segment;
 - optional HyDE in `internal_retrieval.py`, using a variable-grounded hypothetical passage to improve semantic search;
 - `political_graph.py`, a C02b knowledge-graph component that summarizes inferred relations between political actors under temporal constraints.
