@@ -256,3 +256,60 @@ def test_general_context_format_is_background_only():
 
     assert "[C1]" in formatted
     assert "segment=doc1:p000" in formatted
+
+
+def test_chat_prompt_is_bounded_for_small_vllm_contexts():
+    citations = build_citations(
+        [
+            {
+                "segment_id": f"doc1:p{i:03d}c000",
+                "text": "Evidence text " + ("x" * 1200),
+                "parent_text": "Parent context " + ("y" * 1200),
+                "meta": {
+                    "doc_id": "doc1",
+                    "country_iso3": "DEU",
+                    "party_id": "41320",
+                    "doc_date": "2009-09-01",
+                    "doc_type": "manifesto_api_text",
+                    "reliability": "official",
+                },
+            }
+            for i in range(12)
+        ]
+    )
+    general = build_general_context_items(
+        [
+            {
+                "segment_id": f"doc1:p{i:03d}",
+                "text": "General context " + ("z" * 1500),
+                "meta": {
+                    "country_iso3": "DEU",
+                    "party_id": "41320",
+                    "doc_date": "2009-09-01",
+                    "doc_type": "manifesto_api_text",
+                },
+            }
+            for i in range(4)
+        ]
+    )
+    messages = build_messages(
+        "What does the party say about democracy?",
+        citations,
+        ChatRequest(
+            question="What does the party say about democracy?",
+            as_of=date(2009, 9, 27),
+            party_id="41320",
+            history=[
+                {"role": "user", "content": "previous " + ("h" * 2000)},
+                {"role": "assistant", "content": "answer " + ("a" * 2000)},
+            ],
+        ),
+        general,
+    )
+
+    prompt = "\n".join(message["content"] for message in messages)
+    assert len(prompt) < 7000
+    assert "[S6]" in prompt
+    assert "[S7]" not in prompt
+    assert "[C2]" in prompt
+    assert "[C3]" not in prompt

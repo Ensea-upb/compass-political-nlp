@@ -17,6 +17,14 @@ from compass.config import settings
 from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
+_MAX_PROMPT_CITATIONS = 6
+_MAX_GENERAL_CONTEXT_ITEMS = 2
+_MAX_EVIDENCE_TEXT_CHARS = 360
+_MAX_PARENT_CONTEXT_CHARS = 240
+_MAX_GENERAL_CONTEXT_CHARS = 360
+_MAX_CHAT_HISTORY_MESSAGES = 2
+_MAX_CHAT_HISTORY_CHARS = 350
+_MAX_CHAT_OUTPUT_TOKENS = 650
 
 
 @dataclass(frozen=True)
@@ -144,7 +152,7 @@ class ChatEngine:
                 self.model_name,
                 messages,
                 temperature=0.0,
-                max_tokens=min(settings.llm_max_tokens, 900),
+                max_tokens=min(settings.llm_max_tokens, _MAX_CHAT_OUTPUT_TOKENS),
             )
             if not answer:
                 raise RuntimeError("Empty LLM response")
@@ -221,14 +229,15 @@ def build_messages(
     request: ChatRequest,
     general_context: list[GeneralContext] | None = None,
 ) -> list[dict[str, str]]:
+    prompt_citations = citations[:_MAX_PROMPT_CITATIONS]
     evidence_context = "\n\n".join(
         f"[{citation.ref_id}] "
         f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
         f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
         f"reliability={citation.reliability or 'unknown'}\n"
         f"local_parent_context={_compact_parent_context(citation)}\n"
-        f"{citation.text}"
-        for citation in citations
+        f"{_excerpt(citation.text, max_chars=_MAX_EVIDENCE_TEXT_CHARS)}"
+        for citation in prompt_citations
     )
     general_context_text = format_general_context_for_prompt(general_context or [])
     language = infer_answer_language(question)
@@ -251,7 +260,11 @@ def build_messages(
         f"COMPASS general context (background only, not citation evidence):\n{general_context_text}\n\n"
         f"COMPASS cited evidence:\n{evidence_context}"
     )
-    history = compact_history(request.history)
+    history = compact_history(
+        request.history,
+        max_messages=_MAX_CHAT_HISTORY_MESSAGES,
+        max_chars=_MAX_CHAT_HISTORY_CHARS,
+    )
     return [{"role": "system", "content": system}, *history, {"role": "user", "content": user}]
 
 
@@ -289,7 +302,7 @@ def retrieve_general_context(
         records = memory.query_documents(
             build_general_context_query(question),
             as_of=request.as_of,
-            k=3,
+            k=_MAX_GENERAL_CONTEXT_ITEMS,
             party_id=request.party_id,
             include_unverified=request.include_unverified,
             include_parent_segments=True,
@@ -298,7 +311,7 @@ def retrieve_general_context(
         return build_general_context_items(evidence_records, limit=2)
     except Exception:
         return build_general_context_items(evidence_records, limit=2)
-    return build_general_context_items(records, limit=3)
+    return build_general_context_items(records, limit=_MAX_GENERAL_CONTEXT_ITEMS)
 
 
 def build_general_context_query(question: str) -> str:
@@ -312,12 +325,12 @@ def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
     if not items:
         return "No separate general context retrieved."
     lines = []
-    for item in items:
+    for item in items[:_MAX_GENERAL_CONTEXT_ITEMS]:
         lines.append(
             f"[{item.ref_id}] country={item.country_iso3 or 'unknown'} "
             f"party={item.party_id or 'unknown'} date={item.doc_date or 'unknown'} "
             f"type={item.doc_type or 'unknown'} segment={item.segment_id}\n"
-            f"{_excerpt(item.text, max_chars=650)}"
+            f"{_excerpt(item.text, max_chars=_MAX_GENERAL_CONTEXT_CHARS)}"
         )
     return "\n\n".join(lines)
 
@@ -325,7 +338,7 @@ def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
 def _compact_parent_context(citation: Citation) -> str:
     if not citation.parent_text:
         return "none"
-    return _excerpt(citation.parent_text, max_chars=450)
+    return _excerpt(citation.parent_text, max_chars=_MAX_PARENT_CONTEXT_CHARS)
 
 
 def extract_segment_ids(text: str) -> list[str]:

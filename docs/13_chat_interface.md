@@ -23,6 +23,15 @@ The chat now separates two kinds of context:
 
 This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
+For small local vLLM models, the chat also applies a prompt budget:
+
+- at most 6 cited evidence passages are sent to the LLM;
+- at most 2 general context blocks are sent;
+- parent context, evidence text, and conversation history are truncated;
+- chat answers request at most 650 output tokens.
+
+This avoids common vLLM `400 Bad Request` failures caused by prompts that exceed the model context window, especially with `Qwen/Qwen2.5-3B-Instruct` served at `max_model_len=4096`.
+
 ## Install UI dependency
 
 After the full or Onyxia requirements:
