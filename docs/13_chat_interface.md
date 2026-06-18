@@ -28,6 +28,17 @@ pip install -r requirements-chat.txt
 Recommended stable interface, without Gradio:
 
 ```bash
+export COMPASS_DATA_DIR=/home/onyxia/work/compass-political-nlp/data/manifesto_ingestion
+export COMPASS_CHROMA_DIR=/home/onyxia/work/compass-political-nlp/data/manifesto_ingestion/chroma
+export COMPASS_SQLITE_PATH=/home/onyxia/work/compass-political-nlp/data/manifesto_ingestion/compass_structured.db
+
+export COMPASS_LLM_BACKEND=local
+export COMPASS_LLM_API_BASE=http://localhost:8000/v1
+export COMPASS_LLM_API_KEY=EMPTY
+export COMPASS_JUDGE_MODELS=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HYDE_MODEL=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HF_DEVICE=cpu
+
 python apps/chat_web.py \
   --country DEU \
   --as-of 2009-09-27 \
@@ -35,7 +46,16 @@ python apps/chat_web.py \
   --port 41771
 ```
 
-The older Gradio prototype remains available as `apps/chat_gradio.py`, but `chat_web.py` is preferred on Onyxia when Gradio returns frontend JSON parsing errors.
+Expose port `41771` in the Onyxia service configuration. If another service already uses it, choose any free port and expose the same value.
+
+The older Gradio prototype remains available as `apps/chat_gradio.py`, but `chat_web.py` is preferred on Onyxia when Gradio returns frontend JSON parsing errors such as:
+
+```text
+Unexpected token 'U', "Unsupported"... is not valid JSON
+Could not parse server response
+```
+
+The dependency-light web app also avoids the version tension between recent Gradio packages and the FastAPI/Starlette pins used by the validated vLLM runtime.
 
 ## Launch with Gradio
 
@@ -53,7 +73,21 @@ python apps/chat_gradio.py \
   --port 7860
 ```
 
-Expose port `7860` in the Onyxia service configuration if you want to open the UI from the browser.
+Expose port `7860` in the Onyxia service configuration if you want to open the UI from the browser. Prefer `chat_web.py` for the operational Onyxia workflow.
+
+## Expected behavior
+
+When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc.
+
+When vLLM is stopped, misconfigured, or returns an error, the chat should not crash. It returns an extractive fallback built from the most relevant retrieved passages and includes a technical note such as `fallback déclenché`.
+
+You can request an exact passage by segment id:
+
+```text
+je veux ce passage: 1312ffc6-e62d-4b91-a043-d384a8697f39:p018c001
+```
+
+If the answer cites evidence but then cannot print the cited passages, check that `COMPASS_CHROMA_DIR` and `COMPASS_SQLITE_PATH` point to the same ingestion run.
 
 ## Example questions
 

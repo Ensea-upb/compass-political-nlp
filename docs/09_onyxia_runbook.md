@@ -59,10 +59,33 @@ Full status: completed
 v2pavote: score=42.5, ...
 ```
 
-## 5. If Something Fails
+## 5. Local vLLM and Chat
+
+For the validated Onyxia local-LLM path:
+
+1. Start vLLM with the T4-safe profile in `docs/11_onyxia_hf_models.md`.
+2. Verify `curl http://localhost:8000/v1/models`.
+3. Export the `COMPASS_LLM_*` variables shown in the same guide.
+4. Launch the chat interface with `docs/13_chat_interface.md`.
+
+On Tesla T4, keep the vLLM flags:
+
+```bash
+export VLLM_USE_FLASHINFER_SAMPLER=0
+# vLLM server flag: --attention-backend TRITON_ATTN
+```
+
+This avoids the FlashInfer startup failure:
+
+```text
+BatchPrefillWithPagedKVCache failed with error invalid argument
+```
+
+## 6. If Something Fails
 
 - Missing Python package in smoke/test mode: rerun `pip install -r requirements-test.txt`.
 - Missing Python package in full mode: rerun `pip install -r requirements-full.txt`.
 - Model download blocked: allow outbound internet or pre-populate the Hugging Face cache in the Onyxia service.
 - Memory error: restart with more RAM.
 - Tesseract error: the synthetic full example does not need OCR, so Tesseract is only required for PDF scans.
+- Gradio JSON parse error: use `python apps/chat_web.py` instead of `apps/chat_gradio.py`.

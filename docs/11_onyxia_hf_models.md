@@ -1,12 +1,12 @@
 # Onyxia Hugging Face Models
 
-COMPASS defaults to the validated `onyxia-16gb` open-weight profile served through a local OpenAI-compatible endpoint. This avoids requiring OpenAI, Anthropic, or Mistral API keys while staying runnable on the tested NVIDIA A2 16 GB service.
+COMPASS defaults to the validated `onyxia-16gb` open-weight profile served through a local OpenAI-compatible endpoint. This avoids requiring OpenAI, Anthropic, or Mistral API keys while staying runnable on the tested 16 GB Onyxia GPU services.
 
 ## Runtime Profiles
 
 ### `onyxia-16gb` operational profile
 
-This is the default public configuration because it is the profile validated on Onyxia with an NVIDIA A2 16 GB GPU:
+This is the default public configuration because it is the profile validated on Onyxia with NVIDIA 16 GB GPUs, including Tesla T4 services:
 
 ```bash
 export COMPASS_JUDGE_MODELS=Qwen/Qwen2.5-3B-Instruct
@@ -67,7 +67,7 @@ If a model requires authentication, set `HF_TOKEN` in the environment. The scrip
 
 ## Validated Onyxia Installation
 
-The following installation sequence was validated on an Onyxia `vscode-tensorflow-gpu` service with an NVIDIA A2 16 GB GPU and a 100 Gi persistent volume:
+The following installation sequence was validated on Onyxia `vscode-tensorflow-gpu` services with 16 GB GPUs and a 100 Gi persistent volume:
 
 ```bash
 cd ~/work/compass-political-nlp
@@ -83,30 +83,47 @@ The Onyxia runtime file pins the FastAPI/Starlette/Prometheus stack used by vLLM
 AttributeError: '_IncludedRouter' object has no attribute 'path'
 ```
 
-After installation, verify the vLLM server with:
+Do not repeatedly force-reinstall FastAPI/Starlette unless the `_IncludedRouter` error is present. The tested pins can conflict with recent Gradio packages, so install the chat UI after vLLM is stable.
+
+## 2. Serve With vLLM
+
+Operational `onyxia-16gb` example for Tesla T4 / FlashInfer-sensitive services:
+
+```bash
+pkill -f vllm || true
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export VLLM_USE_FLASHINFER_SAMPLER=0
+
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --tensor-parallel-size 1 \
+  --gpu-memory-utilization 0.75 \
+  --max-model-len 2048 \
+  --max-num-seqs 1 \
+  --dtype float16 \
+  --attention-backend TRITON_ATTN \
+  --disable-custom-all-reduce \
+  --enforce-eager
+```
+
+This avoids the FlashInfer warmup failure observed on Tesla T4:
+
+```text
+BatchPrefillWithPagedKVCache failed with error invalid argument
+```
+
+If this profile starts cleanly, you can later try `--max-model-len 4096`. Keep `TRITON_ATTN` on T4 unless you explicitly validate FlashInfer.
+
+After vLLM starts, verify the server from another terminal:
 
 ```bash
 curl http://localhost:8000/v1/models
 ```
 
 A successful response should list the served model, for example `Qwen/Qwen2.5-3B-Instruct`.
-
-## 2. Serve With vLLM
-
-Operational `onyxia-16gb` example:
-
-```bash
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-3B-Instruct \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --tensor-parallel-size 1 \
-  --gpu-memory-utilization 0.85 \
-  --max-model-len 4096 \
-  --max-num-seqs 1 \
-  --enforce-eager
-```
 
 Research `onyxia-large` example, only for high-memory multi-GPU services:
 
@@ -151,7 +168,7 @@ These figures are practical starting points, not hard guarantees:
 
 | Model | Role | Suggested GPU profile |
 | --- | --- | --- |
-| `Qwen/Qwen2.5-3B-Instruct` | default judge and optional HyDE substitute | NVIDIA A2 16 GB with reduced context |
+| `Qwen/Qwen2.5-3B-Instruct` | default judge and optional HyDE substitute | NVIDIA T4/A2 16 GB with reduced context |
 | `Qwen/Qwen3-14B` | HyDE | 1-2 high-memory GPUs, or quantized single GPU |
 | `Qwen/Qwen3-32B` | judge | 2-4 high-memory GPUs |
 | `mistralai/Mistral-Small-3.1-24B-Instruct-2503` | judge | 2-4 high-memory GPUs |
@@ -172,6 +189,13 @@ export COMPASS_JUDGE_MODELS="Qwen/Qwen2.5-7B-Instruct,mistralai/Mistral-7B-Instr
 Document any substitution and rerun the pilot ablations before treating scores as research outputs.
 
 ## Troubleshooting vLLM 500 Errors
+
+If vLLM fails before serving `/v1/models` and the traceback mentions FlashInfer, `BatchPrefillWithPagedKVCache`, or `invalid argument`, restart with the T4-safe command above:
+
+```bash
+export VLLM_USE_FLASHINFER_SAMPLER=0
+# keep: --attention-backend TRITON_ATTN
+```
 
 If vLLM returns HTTP 500 for both `/v1/chat/completions` and `/v1/completions`, check the server logs. If the traceback mentions `prometheus_fastapi_instrumentator` and `_IncludedRouter`, reinstall the tested runtime pins:
 
