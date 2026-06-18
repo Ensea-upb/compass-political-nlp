@@ -246,6 +246,35 @@ class TestGap1_HierarchicalChunking:
         assert {item["segment_id"] for item in result} == {"dense:p000c000", "lex:p000c000"}
         assert all("hybrid_score" in item for item in result)
 
+    def test_query_documents_hybrid_boosts_direct_democracy_evidence(self):
+        from tests.conftest import CHROMA_COL
+
+        memory = _country_memory()
+        CHROMA_COL.query.reset_mock()
+        CHROMA_COL.get.reset_mock()
+        CHROMA_COL.query.return_value = {
+            "ids": [["indirect:p000c000"]],
+            "documents": [["Sustainability and culture shape future generations."]],
+            "metadatas": [[{"party_id": "pd_sen", "segment_level": "child"}]],
+        }
+        CHROMA_COL.get.return_value = {
+            "ids": ["direct:p000c000", "indirect:p000c000"],
+            "documents": [
+                "Democratic participation, citizens, parliament, and constitutional rights are central.",
+                "Sustainability and culture shape future generations.",
+            ],
+            "metadatas": [
+                {"party_id": "pd_sen", "segment_level": "child"},
+                {"party_id": "pd_sen", "segment_level": "child"},
+            ],
+        }
+
+        result = memory.query_documents_hybrid("What does the party say about democracy?", as_of=date(2024, 3, 24), party_id="pd_sen", k=2)
+
+        assert result[0]["segment_id"] == "direct:p000c000"
+        assert "profile_boost" in result[0]["retrieval_reason"]
+        assert "profile_missing_direct_terms" in result[1]["retrieval_reason"]
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Gap 2 — HyDE dans C06

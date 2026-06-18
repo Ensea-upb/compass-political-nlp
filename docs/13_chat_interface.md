@@ -9,6 +9,7 @@ User question
 -> ChatEngine
 -> CountryMemory.query_documents_hybrid()
 -> dense retrieval + BM25 fusion
+-> question-aware evidence boost
 -> cited evidence segments
 -> parent/general context retrieval
 -> local vLLM through compass.llm_client
@@ -26,6 +27,8 @@ The chat now separates two kinds of context:
 This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
 The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text, splits oversized fragments, and can start new parent blocks when semantic cohesion drops. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
+
+The retrieval layer also applies question-aware evidence scoring. For example, a question about democracy boosts passages containing direct terms such as `democracy`, `democratic`, `citizens`, `participation`, `parliament`, `rights`, or `constitutional`, and demotes indirect passages that only match broad context. The prompt page exposes `retrieval_reason` for each cited passage so the selection can be audited.
 
 After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens a local inspection page containing a human-readable rendering of the exact message list sent to the OpenAI-compatible vLLM endpoint, plus a collapsible raw JSON view for auditability. Source details are no longer appended at the end of every chat answer; the answer itself should cite evidence inline with `[S1]`, `[S2]`, etc.
 

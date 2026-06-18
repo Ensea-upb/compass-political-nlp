@@ -39,6 +39,39 @@ from compass.schemas import Segment
 
 logger = logging.getLogger(__name__)
 
+_QUESTION_PROFILES = {
+    "democracy": {
+        "triggers": {
+            "democracy", "democratic", "democratie", "democratique",
+            "citizen", "citizens", "participation", "parliament",
+            "election", "elections", "constitutional", "constitution",
+            "rights", "freedom", "liberty", "rule", "law",
+        },
+        "strong": {
+            "democracy", "democratic", "democratie", "democratique",
+            "parliament", "participation", "citizens", "constitutional",
+            "elections", "rights", "freedom", "rule", "law",
+        },
+        "weak": {
+            "sustainability", "sustainable", "culture", "art", "market",
+            "future", "ecological", "environmental",
+        },
+    },
+    "economy": {
+        "triggers": {
+            "economy", "economic", "economie", "emploi", "wages",
+            "salary", "industry", "exports", "innovation", "growth",
+            "tax", "taxation", "market", "jobs",
+        },
+        "strong": {
+            "employment", "jobs", "wages", "salary", "industry",
+            "exports", "innovation", "tax", "taxation", "growth",
+            "market", "economy", "economic",
+        },
+        "weak": {"culture", "art", "identity"},
+    },
+}
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS elections (
     election_id TEXT PRIMARY KEY, country_iso3 TEXT NOT NULL,
@@ -283,6 +316,7 @@ def _has_results(result: dict) -> bool:
 
 def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: int) -> list[dict]:
     query_tokens = _tokens(question)
+    profile = _question_profile(query_tokens)
     dense_rank = {item["segment_id"]: rank for rank, item in enumerate(dense, start=1)}
     bm25_rank: dict[str, int] = {}
     if query_tokens and candidates and BM25Okapi is not None:
@@ -301,10 +335,17 @@ def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: in
             score += 1.0 / (60 + dense_rank[sid])
         if sid in bm25_rank:
             score += 1.25 / (60 + bm25_rank[sid])
+        profile_score, profile_reason = _profile_score(item.get("text", ""), profile)
+        score += profile_score
         enriched = dict(item)
         enriched["hybrid_score"] = score
         enriched["dense_rank"] = dense_rank.get(sid)
         enriched["bm25_rank"] = bm25_rank.get(sid)
+        enriched["retrieval_reason"] = _retrieval_reason(
+            dense_rank.get(sid),
+            bm25_rank.get(sid),
+            profile_reason,
+        )
         ranked.append(enriched)
     return sorted(ranked, key=lambda item: float(item.get("hybrid_score") or 0.0), reverse=True)[:k]
 
@@ -330,4 +371,43 @@ def _lexical_overlap(query_tokens: list[str], text: str) -> float:
     if not text_tokens:
         return 0.0
     return float(sum(1 for token in query_tokens if token in text_tokens))
+
+
+def _question_profile(query_tokens: list[str]) -> dict | None:
+    token_set = set(query_tokens)
+    for profile in _QUESTION_PROFILES.values():
+        if token_set & profile["triggers"]:
+            return profile
+    return None
+
+
+def _profile_score(text: str, profile: dict | None) -> tuple[float, str]:
+    if profile is None:
+        return 0.0, ""
+    tokens = set(_tokens(text))
+    strong_hits = tokens & profile["strong"]
+    weak_hits = tokens & profile["weak"]
+    score = 0.0
+    reasons: list[str] = []
+    if strong_hits:
+        score += min(0.08, 0.025 * len(strong_hits))
+        reasons.append("profile_boost=" + ",".join(sorted(strong_hits)[:5]))
+    if not strong_hits:
+        score -= 0.05
+        reasons.append("profile_missing_direct_terms")
+    if weak_hits and not strong_hits:
+        score -= 0.04
+        reasons.append("profile_indirect_terms=" + ",".join(sorted(weak_hits)[:5]))
+    return score, ";".join(reasons)
+
+
+def _retrieval_reason(dense_rank: int | None, bm25_rank: int | None, profile_reason: str) -> str:
+    parts: list[str] = []
+    if dense_rank is not None:
+        parts.append(f"dense_rank={dense_rank}")
+    if bm25_rank is not None:
+        parts.append(f"bm25_rank={bm25_rank}")
+    if profile_reason:
+        parts.append(profile_reason)
+    return " | ".join(parts)
 

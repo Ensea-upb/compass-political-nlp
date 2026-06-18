@@ -53,6 +53,7 @@ class Citation:
     doc_type: str | None
     reliability: str | None
     parent_text: str | None = None
+    retrieval_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,7 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
                 doc_type=_none_if_empty(meta.get("doc_type")),
                 reliability=_none_if_empty(meta.get("reliability")),
                 parent_text=_none_if_empty(item.get("parent_text")),
+                retrieval_reason=_none_if_empty(item.get("retrieval_reason")),
             )
         )
     return citations
@@ -266,6 +268,7 @@ def build_messages(
         f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
         f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
         f"reliability={citation.reliability or 'unknown'}\n"
+        f"retrieval_reason={citation.retrieval_reason or 'not available'}\n"
         f"local_parent_context={_compact_parent_context(citation)}\n"
         f"{_excerpt(citation.text, max_chars=_MAX_EVIDENCE_TEXT_CHARS)}"
         for citation in prompt_citations
