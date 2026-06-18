@@ -37,8 +37,33 @@ class FakeMemory:
 class HybridMemory(FakeMemory):
     def __init__(self):
         self.hybrid_called = False
+        self.hybrid_general_called = False
 
-    def query_documents_hybrid(self, question, as_of, k=12, party_id=None, include_unverified=False):
+    def query_documents_hybrid(
+        self,
+        question,
+        as_of,
+        k=12,
+        party_id=None,
+        include_unverified=False,
+        include_parent_segments=False,
+    ):
+        if include_parent_segments:
+            self.hybrid_general_called = True
+            return [
+                {
+                    "segment_id": "doc1:p000",
+                    "text": "General context: this manifesto section discusses democratic institutions.",
+                    "meta": {
+                        "doc_id": "doc1",
+                        "country_iso3": "DEU",
+                        "party_id": party_id or "41320",
+                        "doc_date": "2009-09-01",
+                        "doc_type": "manifesto_api_text",
+                        "reliability": "official",
+                    },
+                }
+            ]
         self.hybrid_called = True
         return super().query_documents(question, as_of, k, party_id, include_unverified)
 
@@ -71,6 +96,7 @@ def test_chat_engine_prefers_hybrid_retrieval(monkeypatch):
     )
 
     assert memory.hybrid_called is True
+    assert memory.hybrid_general_called is True
 
 
 def test_chat_engine_falls_back_when_llm_fails(monkeypatch):
@@ -137,9 +163,14 @@ def test_chat_prompt_requires_evidence_linked_claims():
     )
 
     system = messages[0]["content"]
-    assert "Every substantive claim" in system
+    assert "Every substantive political claim" in system
     assert "Do not overinterpret" in system
-    assert "COMPASS general context" in messages[-1]["content"]
+    assert "Do not use outside knowledge" in system
+    assert "Never cite [C1]" in system
+    assert "provided evidence is insufficient" in system
+    assert "GENERAL_CONTEXT - background only" in messages[-1]["content"]
+    assert "CITED_EVIDENCE - the only claim-supporting evidence" in messages[-1]["content"]
+    assert "Answer contract" in messages[-1]["content"]
 
 
 def test_strip_appended_sources_removes_model_bibliography():
@@ -259,7 +290,7 @@ def test_general_context_is_added_without_becoming_cited_evidence(monkeypatch):
     assert response.llm_used is True
     assert response.general_context[0].segment_id == "doc1:p000"
     assert any(include_parent for _, include_parent in memory.queries)
-    assert "COMPASS general context" in seen["prompt"]
+    assert "GENERAL_CONTEXT - background only" in seen["prompt"]
     assert "local_parent_context=Parent context" in seen["prompt"]
     assert response.citations[0].segment_id == "doc1:p000c000"
 

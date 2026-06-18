@@ -102,7 +102,12 @@ Expose port `7860` in the Onyxia service configuration if you want to open the U
 
 When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages.
 
-The prompt also receives a separate `COMPASS general context` block. This block contains broader parent chunks from the same country, date filter, and party scope. It is background only: the model is explicitly instructed not to cite it and not to make claims that are absent from the cited evidence.
+The prompt receives two explicitly separated blocks:
+
+- `GENERAL_CONTEXT`: broader parent chunks from the same country, date filter, and party scope. This is background only. The model is explicitly forbidden to cite `[C1]`, `[C2]`, or to use this block as proof.
+- `CITED_EVIDENCE`: the only passages allowed to support political claims. Every substantive claim must cite `[S1]`, `[S2]`, etc.
+
+The prompt is calibrated to reduce hallucination risk: it forbids outside knowledge, asks the model to reject unsupported user premises cautiously, and requires an explicit insufficiency statement when the cited evidence does not answer the question.
 
 The source block is designed for demos. It includes metadata, segment id, and a short excerpt:
 

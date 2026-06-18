@@ -19,11 +19,11 @@ from compass.llm_client import complete_chat
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
 _MAX_PROMPT_CITATIONS = 6
 _MAX_GENERAL_CONTEXT_ITEMS = 2
-_MAX_EVIDENCE_TEXT_CHARS = 360
-_MAX_PARENT_CONTEXT_CHARS = 240
-_MAX_GENERAL_CONTEXT_CHARS = 360
+_MAX_EVIDENCE_TEXT_CHARS = 280
+_MAX_PARENT_CONTEXT_CHARS = 180
+_MAX_GENERAL_CONTEXT_CHARS = 260
 _MAX_CHAT_HISTORY_MESSAGES = 2
-_MAX_CHAT_HISTORY_CHARS = 350
+_MAX_CHAT_HISTORY_CHARS = 240
 _MAX_CHAT_OUTPUT_TOKENS = 650
 
 
@@ -274,12 +274,20 @@ def build_messages(
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
-        "Answer only from the provided COMPASS evidence. Every substantive claim must end with an inline citation like [S1] or [S2]. "
-        "Use the COMPASS general context only to understand the document frame; do not cite it as evidence and do not make claims that are absent from cited evidence. "
+        "Your task is evidence-grounded analysis, not open-ended political commentary. "
+        "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
+        "There are two inputs: GENERAL_CONTEXT and CITED_EVIDENCE. "
+        "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
+        "CITED_EVIDENCE contains the only passages that may support claims. "
+        "Every substantive political claim must end with an inline citation like [S1] or [S2]. "
+        "Never cite [C1], [C2], or any GENERAL_CONTEXT label. "
+        "If the cited evidence does not answer the question, say that the provided evidence is insufficient and explain what is missing. "
+        "If a user premise is not supported by the cited evidence, correct it cautiously instead of accepting it. "
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
         "Do not infer motives, psychology, or hidden positions beyond the passages. "
         "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
         "Prefer short evidence-linked sentences over broad summaries. "
+        "Before answering, internally verify that each sentence with a political claim has at least one [S] citation. "
         f"Answer in {language}."
     )
     scope = f"as_of={request.as_of.isoformat()}"
@@ -288,8 +296,15 @@ def build_messages(
     user = (
         f"Scope: {scope}\n\n"
         f"Question: {question}\n\n"
-        f"COMPASS general context (background only, not citation evidence):\n{general_context_text}\n\n"
-        f"COMPASS cited evidence:\n{evidence_context}"
+        "GENERAL_CONTEXT - background only, never cite this block:\n"
+        f"{general_context_text}\n\n"
+        "CITED_EVIDENCE - the only claim-supporting evidence:\n"
+        f"{evidence_context}\n\n"
+        "Answer contract:\n"
+        "- Answer the question directly.\n"
+        "- Use [S1], [S2], etc. for every claim.\n"
+        "- Do not cite [C1] or other general-context labels.\n"
+        "- If evidence is weak or absent, say so explicitly."
     )
     history = compact_history(
         request.history,
@@ -330,16 +345,36 @@ def retrieve_general_context(
 ) -> list[GeneralContext]:
     """Retrieve broad parent-level context without mixing it into citations."""
     try:
-        records = memory.query_documents(
-            build_general_context_query(question),
-            as_of=request.as_of,
-            k=_MAX_GENERAL_CONTEXT_ITEMS,
-            party_id=request.party_id,
-            include_unverified=request.include_unverified,
-            include_parent_segments=True,
-        )
+        if hasattr(memory, "query_documents_hybrid"):
+            records = memory.query_documents_hybrid(
+                build_general_context_query(question),
+                as_of=request.as_of,
+                k=_MAX_GENERAL_CONTEXT_ITEMS,
+                party_id=request.party_id,
+                include_unverified=request.include_unverified,
+                include_parent_segments=True,
+            )
+        else:
+            records = memory.query_documents(
+                build_general_context_query(question),
+                as_of=request.as_of,
+                k=_MAX_GENERAL_CONTEXT_ITEMS,
+                party_id=request.party_id,
+                include_unverified=request.include_unverified,
+                include_parent_segments=True,
+            )
     except TypeError:
-        return build_general_context_items(evidence_records, limit=2)
+        try:
+            records = memory.query_documents(
+                build_general_context_query(question),
+                as_of=request.as_of,
+                k=_MAX_GENERAL_CONTEXT_ITEMS,
+                party_id=request.party_id,
+                include_unverified=request.include_unverified,
+                include_parent_segments=True,
+            )
+        except Exception:
+            return build_general_context_items(evidence_records, limit=2)
     except Exception:
         return build_general_context_items(evidence_records, limit=2)
     return build_general_context_items(records, limit=_MAX_GENERAL_CONTEXT_ITEMS)
