@@ -146,6 +146,8 @@ class ManifestoAPI:
             if exc.code not in (401, 403) or not self.api_key:
                 raise ManifestoAPIError(f"Could not download PDF from {url}: {exc}") from exc
             data = self._download_bytes(_append_query_param(url, "api_key", self.api_key))
+        if not data.lstrip().startswith(b"%PDF"):
+            raise ManifestoAPIError(f"Manifesto original document endpoint did not return a PDF: {url}")
         destination.write_bytes(data)
         return destination
 
@@ -193,7 +195,7 @@ class ManifestoAPI:
             raise ManifestoAPIError(f"Manifesto API returned non-JSON content: {raw[:300]!r}") from exc
 
     def auth_headers(self) -> dict[str, str]:
-        return {"API_KEY": self.api_key} if self.api_key else {}
+        return {"API_KEY": self.api_key, "Authorization": f"Token {self.api_key}"} if self.api_key else {}
 
 
 def _bool(value: bool) -> str:
@@ -225,7 +227,10 @@ def find_pdf_url(payload: dict[str, Any], preferred_field: str | None = None) ->
     candidates = []
     if preferred_field:
         candidates.append(_lookup_dotted(payload, preferred_field))
-    candidates.extend(payload.get(field) for field in ("pdf_url", "document_url", "download_url", "original_url", "url"))
+    candidates.extend(
+        payload.get(field)
+        for field in ("url_original", "pdf_url", "document_url", "download_url", "original_url", "url")
+    )
     links = payload.get("links")
     if isinstance(links, dict):
         candidates.extend(links.get(field) for field in ("pdf", "original", "original_pdf", "download"))

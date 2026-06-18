@@ -38,7 +38,7 @@ python examples/run_manifesto_pdf_ingestion.py \
   --print-metadata
 ```
 
-First run with `--dry-run`. If the report says `missing_pdf_url`, inspect the printed metadata and rerun with the field containing the original PDF URL:
+First run with `--dry-run`. Manifesto metadata usually exposes original documents through `url_original`. If your metadata version uses another field, inspect the printed metadata and rerun with the field containing the original PDF URL:
 
 ```bash
 python examples/run_manifesto_pdf_ingestion.py \
@@ -51,7 +51,7 @@ python examples/run_manifesto_pdf_ingestion.py \
   --pdf-field links.original_pdf
 ```
 
-The exact field name can vary with the metadata schema. The script also searches nested metadata automatically for PDF-like URLs.
+The exact field name can vary with the metadata schema, but the client intentionally checks only explicit URL fields such as `url_original` instead of guessing from arbitrary nested values.
 
 ## 3. Batch ingestion from a CSV manifest
 

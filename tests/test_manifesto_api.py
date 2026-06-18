@@ -14,7 +14,7 @@ def test_normalize_manifesto_url_keeps_absolute_url():
 
 def test_find_pdf_url_uses_explicit_metadata_fields_only():
     payload = {
-        "pdf_url": "/down/originals/41320_2009.pdf",
+        "url_original": "/down/originals/41320_2009.pdf",
         "nested": {"href": "https://example.org/ignored.pdf"},
     }
 
@@ -123,11 +123,30 @@ def test_protected_endpoint_requires_api_key_before_network():
         raise AssertionError("metadata endpoint should require an API key")
 
 
+def test_api_auth_headers_match_official_and_manifestor_forms():
+    api = ManifestoAPI(api_key="test-key")
+
+    assert api.auth_headers() == {"API_KEY": "test-key", "Authorization": "Token test-key"}
+
+
+def test_download_pdf_rejects_non_pdf_payload(monkeypatch, tmp_path):
+    api = ManifestoAPI(api_key="test-key")
+
+    monkeypatch.setattr(api, "_download_bytes", lambda url: b"Unsupported or forbidden page")
+
+    try:
+        api.download_pdf("/down/originals/41320_2009.pdf", tmp_path / "manifesto.pdf")
+    except ManifestoAPIError as exc:
+        assert "did not return a PDF" in str(exc)
+    else:
+        raise AssertionError("download_pdf should reject non-PDF payloads")
+
+
 def test_resolve_documents_uses_manifesto_id_without_zip_shift(monkeypatch):
     api = ManifestoAPI(api_key="test-key")
 
     def fake_metadata(keys, version=None):
-        return [{"manifesto_id": "41320_2009", "pdf_url": "/down/originals/41320_2009.pdf"}]
+        return [{"manifesto_id": "41320_2009", "url_original": "/down/originals/41320_2009.pdf"}]
 
     monkeypatch.setattr(api, "metadata", fake_metadata)
 
