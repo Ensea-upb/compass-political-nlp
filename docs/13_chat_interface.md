@@ -75,11 +75,19 @@ python apps/chat_gradio.py \
 
 Expose port `7860` in the Onyxia service configuration if you want to open the UI from the browser. Prefer `chat_web.py` for the operational Onyxia workflow.
 
-## Expected behavior
+## Expected Behavior
 
-When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc.
+When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages.
 
-When vLLM is stopped, misconfigured, or returns an error, the chat should not crash. It returns an extractive fallback built from the most relevant retrieved passages and includes a technical note such as `fallback déclenché`.
+The source block is designed for demos. It includes metadata, segment id, and a short excerpt:
+
+```text
+[S1] DEU | party=41320 | date=2009-09-01 | manifesto_api_text
+segment: `...:p545c001`
+excerpt: "..."
+```
+
+When vLLM is stopped, misconfigured, or returns an error, the chat should not crash. It returns an extractive fallback built from the most relevant retrieved passages and includes a technical note such as `fallback declenche`.
 
 You can request an exact passage by segment id:
 
@@ -87,18 +95,29 @@ You can request an exact passage by segment id:
 je veux ce passage: 1312ffc6-e62d-4b91-a043-d384a8697f39:p018c001
 ```
 
+Exact lookup uses `CountryMemory.fetch_records_by_ids()`, so it should display the same metadata as normal retrieval instead of `UNK party? date? document`.
+
+If you ask a follow-up such as:
+
+```text
+What are the exact sources for your answer?
+```
+
+`chat_web.py` returns the source block from the previous assistant answer instead of launching a new retrieval.
+
 If the answer cites evidence but then cannot print the cited passages, check that `COMPASS_CHROMA_DIR` and `COMPASS_SQLITE_PATH` point to the same ingestion run.
 
-## Example questions
+## Example Questions
 
 ```text
 What does this party say about democracy?
 What economic themes appear in the 2009 manifesto?
 Which passages mention immigration or national identity?
 Give me evidence for the party's position on European integration.
+What are the exact sources for your answer?
 ```
 
-## Programmatic use
+## Programmatic Use
 
 ```python
 from datetime import date

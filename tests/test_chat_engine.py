@@ -2,7 +2,16 @@ from datetime import date
 
 import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
-from compass.chat.engine import build_citations, compact_history, extract_segment_ids, format_citations, infer_answer_language, strip_appended_sources
+from compass.chat.engine import (
+    build_citations,
+    build_messages,
+    build_retrieval_query,
+    compact_history,
+    extract_segment_ids,
+    format_citations,
+    infer_answer_language,
+    strip_appended_sources,
+)
 
 
 class FakeMemory:
@@ -49,15 +58,19 @@ def test_chat_engine_falls_back_when_llm_fails(monkeypatch):
     )
 
     assert response.llm_used is False
-    assert "Réponse extractive COMPASS" in response.answer
+    assert "Reponse extractive COMPASS" in response.answer
     assert response.citations
 
 
 def test_build_citations_and_format_sources():
     citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+    formatted = format_citations(citations)
 
     assert citations[0].country_iso3 == "DEU"
-    assert "doc1:p000c000" in format_citations(citations)
+    assert "doc1:p000c000" in formatted
+    assert "party=41320" in formatted
+    assert "excerpt:" in formatted
+
 
 def test_gradio_history_normalizer_accepts_tuple_history():
     from apps.chat_gradio import _normalize_history
@@ -70,11 +83,13 @@ def test_gradio_history_normalizer_accepts_tuple_history():
         {"role": "user", "content": "next"},
     ]
 
+
 def test_gradio_greeting_detector():
     from apps.chat_gradio import _is_greeting
 
     assert _is_greeting("salut") is True
     assert _is_greeting("What does the party say?") is False
+
 
 def test_gradio_answer_message_handles_greeting():
     from apps.chat_gradio import _answer_message
@@ -83,8 +98,22 @@ def test_gradio_answer_message_handles_greeting():
 
     assert "Bonjour" in answer
 
+
 def test_chat_prompt_respects_requested_french():
-    assert infer_answer_language("réponds en français") == "French"
+    assert infer_answer_language("reponds en francais") == "French"
+
+
+def test_chat_prompt_requires_evidence_linked_claims():
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+    messages = build_messages(
+        "What about democracy?",
+        citations,
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320"),
+    )
+
+    system = messages[0]["content"]
+    assert "Every substantive claim" in system
+    assert "Do not overinterpret" in system
 
 
 def test_strip_appended_sources_removes_model_bibliography():
@@ -104,16 +133,30 @@ def test_compact_history_trims_sources_and_long_answers():
     assert len(compacted[-1]["content"]) <= 83
     assert "Sources" not in compacted[-1]["content"]
 
+
 def test_extract_segment_ids():
     ids = extract_segment_ids("je veux `doc1:p303c001` et doc1:p303c001")
 
     assert ids == ["doc1:p303c001"]
 
 
-def test_chat_engine_fetches_exact_segment_id():
+def test_chat_engine_fetches_exact_segment_id_with_metadata():
     class MemoryWithFetch(FakeMemory):
-        def fetch_by_ids(self, segment_ids):
-            return {segment_ids[0]: "Exact corpus passage."}
+        def fetch_records_by_ids(self, segment_ids):
+            return [
+                {
+                    "segment_id": segment_ids[0],
+                    "text": "Exact corpus passage.",
+                    "meta": {
+                        "doc_id": "doc1",
+                        "country_iso3": "DEU",
+                        "party_id": "41320",
+                        "doc_date": "2009-09-01",
+                        "doc_type": "manifesto_api_text",
+                        "reliability": "official",
+                    },
+                }
+            ]
 
     response = ChatEngine(MemoryWithFetch()).ask(
         ChatRequest(question="je veux le passage doc1:p303c001", as_of=date(2009, 9, 27))
@@ -122,3 +165,13 @@ def test_chat_engine_fetches_exact_segment_id():
     assert response.llm_used is False
     assert "Exact corpus passage" in response.answer
     assert response.citations[0].segment_id == "doc1:p303c001"
+    assert response.citations[0].country_iso3 == "DEU"
+    assert "party=41320" in response.answer
+
+
+def test_economic_retrieval_query_adds_priority_terms():
+    query = build_retrieval_query("What are the economic priorities?")
+
+    assert "employment" in query
+    assert "wages" in query
+    assert "innovation" in query

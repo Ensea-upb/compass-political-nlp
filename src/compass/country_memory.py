@@ -152,6 +152,21 @@ class CountryMemory:
         res = self._col.get(ids=segment_ids, include=["documents"])
         return {sid: doc for sid, doc in zip(res["ids"], res["documents"])}
 
+    def fetch_records_by_ids(self, segment_ids: list[str]) -> list[dict]:
+        """Récupère texte et métadonnées de segments exacts.
+
+        Utilisé par COMPASS Chat pour afficher un lookup direct avec les mêmes
+        métadonnées lisibles que le retrieval normal.
+        """
+        if not segment_ids:
+            return []
+        res = self._col.get(ids=segment_ids, include=["documents", "metadatas"])
+        metadatas = res.get("metadatas") or [{} for _ in res["ids"]]
+        return [
+            {"segment_id": sid, "text": doc, "meta": meta or {}}
+            for sid, doc, meta in zip(res["ids"], res["documents"], metadatas)
+        ]
+
     def query_documents(
         self, question: str, as_of: date, k: int = 12,
         party_id: str | None = None, include_unverified: bool = False,

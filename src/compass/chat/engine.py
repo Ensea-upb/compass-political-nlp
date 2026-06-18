@@ -65,32 +65,27 @@ class ChatEngine:
         self.model_name = model_name or _default_chat_model()
 
     def _answer_segment_lookup(self, question: str, segment_ids: list[str]) -> ChatResponse:
-        texts = self.memory.fetch_by_ids(segment_ids)
-        citations = [
-            Citation(
-                ref_id=f"S{idx}",
-                segment_id=segment_id,
-                text=text,
-                doc_id=segment_id.split(":", 1)[0],
-                country_iso3="",
-                party_id=None,
-                doc_date=None,
-                doc_type=None,
-                reliability=None,
-            )
-            for idx, (segment_id, text) in enumerate(texts.items(), start=1)
-        ]
+        if hasattr(self.memory, "fetch_records_by_ids"):
+            records = self.memory.fetch_records_by_ids(segment_ids)
+        else:
+            texts = self.memory.fetch_by_ids(segment_ids)
+            records = [
+                {"segment_id": segment_id, "text": text, "meta": {}}
+                for segment_id, text in texts.items()
+            ]
+        citations = build_citations(records)
         if not citations:
             return ChatResponse(
-                answer="Je n'ai pas trouvé ce segment exact dans l'index COMPASS.",
+                answer="Je n'ai pas trouve ce segment exact dans l'index COMPASS.",
                 citations=[],
                 model_used=None,
                 llm_used=False,
                 retrieval_count=0,
             )
-        answer_lines = ["Voici le passage exact demandé dans l'index COMPASS :", ""]
+        answer_lines = ["Voici le passage exact demande dans l'index COMPASS :", ""]
         for citation in citations:
             answer_lines.append(f"[{citation.ref_id}] `{citation.segment_id}`")
+            answer_lines.append(_source_label(citation))
             answer_lines.append(citation.text)
             answer_lines.append("")
         return ChatResponse(
@@ -110,7 +105,7 @@ class ChatEngine:
         if segment_ids:
             return self._answer_segment_lookup(question, segment_ids)
         retrieved = self.memory.query_documents(
-            question,
+            build_retrieval_query(question),
             as_of=request.as_of,
             k=request.k,
             party_id=request.party_id,
@@ -119,7 +114,7 @@ class ChatEngine:
         citations = build_citations(retrieved)
         if not citations:
             return ChatResponse(
-                answer="Aucun passage pertinent n'a été trouvé dans la mémoire COMPASS pour cette question.",
+                answer="Aucun passage pertinent n'a ete trouve dans la memoire COMPASS pour cette question.",
                 citations=[],
                 model_used=None,
                 llm_used=False,
@@ -177,17 +172,20 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
 def build_messages(question: str, citations: list[Citation], request: ChatRequest) -> list[dict[str, str]]:
     context = "\n\n".join(
         f"[{citation.ref_id}] "
-        f"party={citation.party_id or 'unknown'} date={citation.doc_date or 'unknown'} "
-        f"type={citation.doc_type or 'unknown'} reliability={citation.reliability or 'unknown'}\n"
+        f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
+        f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
+        f"reliability={citation.reliability or 'unknown'}\n"
         f"{citation.text}"
         for citation in citations
     )
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
-        "Answer only from the provided COMPASS evidence. Cite sources inline with [S1], [S2], etc. "
+        "Answer only from the provided COMPASS evidence. Every substantive claim must end with an inline citation like [S1] or [S2]. "
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
-        "If the evidence is insufficient, say so clearly. Keep the answer concise and analytical. "
+        "Do not infer motives, psychology, or hidden positions beyond the passages. "
+        "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
+        "Prefer short evidence-linked sentences over broad summaries. "
         f"Answer in {language}."
     )
     scope = f"as_of={request.as_of.isoformat()}"
@@ -207,9 +205,10 @@ def extract_segment_ids(text: str) -> list[str]:
             ids.append(match)
     return ids
 
+
 def infer_answer_language(question: str) -> str:
     lowered = question.lower()
-    french_markers = ("français", "francais", "réponds en français", "reponds en francais", "en français", "en francais")
+    french_markers = ("francais", "français", "reponds en francais", "réponds en français", "en francais", "en français")
     if any(marker in lowered for marker in french_markers):
         return "French"
     return "the user's language"
@@ -237,35 +236,58 @@ def strip_appended_sources(answer: str) -> str:
             return stripped[:idx].strip()
     return stripped
 
+
 def build_extractive_answer(question: str, citations: list[Citation], exc: Exception) -> str:
     lines = [
-        "Réponse extractive COMPASS : le modèle LLM n'a pas répondu, donc voici les passages les plus pertinents.",
+        "Reponse extractive COMPASS : le modele LLM n'a pas repondu, donc voici les passages les plus pertinents.",
         f"Question : {question}",
         "",
     ]
     for citation in citations[:5]:
-        snippet = citation.text.strip()
-        if len(snippet) > 500:
-            snippet = snippet[:497].rstrip() + "..."
+        snippet = _excerpt(citation.text, max_chars=500)
         lines.append(f"[{citation.ref_id}] {snippet}")
     lines.append("")
-    lines.append(f"Note technique : fallback déclenché ({type(exc).__name__}).")
+    lines.append(f"Note technique : fallback declenche ({type(exc).__name__}).")
     return "\n".join(lines)
 
 
 def format_citations(citations: list[Citation]) -> str:
     """Return Markdown source list for UI display."""
     if not citations:
-        return "Aucune source retrouvée."
+        return "Aucune source retrouvee."
     lines = []
     for citation in citations:
-        label = (
-            f"[{citation.ref_id}] {citation.country_iso3 or 'UNK'} "
-            f"{citation.party_id or 'party?'} {citation.doc_date or 'date?'} "
-            f"{citation.doc_type or 'document'}"
-        )
-        lines.append(f"- {label} - `{citation.segment_id}`")
+        lines.append(f"- {_source_label(citation)}")
+        lines.append(f"  segment: `{citation.segment_id}`")
+        lines.append(f"  excerpt: \"{_excerpt(citation.text)}\"")
     return "\n".join(lines)
+
+
+def build_retrieval_query(question: str) -> str:
+    """Small query expansion for demo RAG without changing the user question."""
+    lowered = question.lower()
+    if any(token in lowered for token in ("economy", "economic", "emploi", "salaires", "économie", "economie")):
+        return (
+            f"{question} employment wages industry domestic market exports innovation "
+            "taxation growth sustainable economy decent work jobs salaires emploi industrie"
+        )
+    return question
+
+
+def _source_label(citation: Citation) -> str:
+    return (
+        f"[{citation.ref_id}] {citation.country_iso3 or 'UNK'} | "
+        f"party={citation.party_id or 'party?'} | "
+        f"date={citation.doc_date or 'date?'} | "
+        f"{citation.doc_type or 'document'}"
+    )
+
+
+def _excerpt(text: str, max_chars: int = 220) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= max_chars:
+        return clean
+    return clean[: max_chars - 3].rstrip() + "..."
 
 
 def _default_chat_model() -> str:

@@ -13,7 +13,7 @@ import sys
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -56,7 +56,7 @@ HTML = """<!doctype html>
       <div class="scope">__SCOPE__</div>
     </header>
     <section id="chat" aria-live="polite">
-      <div class="msg assistant">Bonjour. Pose une question sur le corpus indexé, par exemple: What does the party say about democracy?</div>
+      <div class="msg assistant">Bonjour. Pose une question sur le corpus indexe, par exemple: What does the party say about democracy?</div>
     </section>
     <form id="form">
       <textarea id="question" placeholder="Ask a question about the indexed corpus..."></textarea>
@@ -194,7 +194,11 @@ def answer_question(
     k: int,
 ) -> str:
     if is_greeting(question):
-        return "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé."
+        return "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexe."
+    if is_source_followup(question):
+        sources = latest_sources_from_history(history)
+        if sources:
+            return "Voici les sources utilisees dans ma reponse precedente :\n\n" + sources
     response = engine.ask(
         ChatRequest(
             question=question,
@@ -209,8 +213,25 @@ def answer_question(
 
 def is_greeting(message: str) -> bool:
     text = (message or "").strip().lower()
-    greetings = ("salut", "bonjour", "hello", "hi", "hey", "bonsoir", "ça va", "ca va")
+    greetings = ("salut", "bonjour", "hello", "hi", "hey", "bonsoir", "ca va")
     return len(text) <= 40 and any(text == item or text.startswith(item + " ") or text.startswith(item + ",") for item in greetings)
+
+
+def is_source_followup(message: str) -> bool:
+    text = (message or "").strip().lower()
+    markers = ("sources", "exact sources", "passages cites", "preuves", "evidence")
+    return len(text) <= 90 and any(marker in text for marker in markers)
+
+
+def latest_sources_from_history(history: list[dict[str, str]]) -> str:
+    for item in reversed(history):
+        if item.get("role") != "assistant":
+            continue
+        content = item.get("content") or ""
+        marker = "\n\nSources\n"
+        if marker in content:
+            return content.split(marker, 1)[1].strip()
+    return ""
 
 
 if __name__ == "__main__":
