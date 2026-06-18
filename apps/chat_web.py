@@ -23,7 +23,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from compass.chat import ChatEngine, ChatRequest
-from compass.chat.engine import format_citations
 
 HTML = """<!doctype html>
 <html lang="en">
@@ -201,17 +200,7 @@ def main() -> None:
             if messages is None:
                 self._send_json({"error": "prompt not found"}, status=404)
                 return
-            body = html.escape(json.dumps(messages, ensure_ascii=False, indent=2))
-            page = (
-                "<!doctype html><html><head><meta charset='utf-8'>"
-                "<title>COMPASS LLM Prompt</title>"
-                "<style>body{font-family:ui-monospace,Consolas,monospace;background:#101113;color:#f4f4f5;"
-                "padding:24px;} pre{white-space:pre-wrap;line-height:1.45;background:#17191d;border:1px solid #30343a;"
-                "padding:16px;border-radius:8px;}</style></head><body>"
-                "<h1>COMPASS LLM Prompt</h1><pre>"
-                + body
-                + "</pre></body></html>"
-            )
+            page = render_prompt_page(messages)
             data = page.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -260,6 +249,7 @@ def answer_question_payload(
         sources = latest_sources_from_history(history)
         if sources:
             return {"answer": "Voici les sources utilisees dans ma reponse precedente :\n\n" + sources}
+        return {"answer": "Les sources detaillees sont disponibles dans la page `Voir le prompt LLM` de la reponse precedente."}
     response = engine.ask(
         ChatRequest(
             question=question,
@@ -269,8 +259,7 @@ def answer_question_payload(
             history=history,
         )
     )
-    answer = response.answer + "\n\nSources\n" + format_citations(response.citations)
-    payload = {"answer": answer}
+    payload = {"answer": response.answer}
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex
         prompt_store[prompt_id] = response.prompt_messages
@@ -299,6 +288,72 @@ def latest_sources_from_history(history: list[dict[str, str]]) -> str:
         if marker in content:
             return content.split(marker, 1)[1].strip()
     return ""
+
+
+def render_prompt_page(messages: list[dict[str, str]]) -> str:
+    cards = "\n".join(_render_prompt_message(message) for message in messages)
+    raw = html.escape(json.dumps(messages, ensure_ascii=False, indent=2))
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>COMPASS LLM Prompt</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    body {{ margin: 0; background: #101113; color: #f4f4f5; }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 28px; }}
+    header {{ border-bottom: 1px solid #30343a; margin-bottom: 18px; padding-bottom: 14px; }}
+    h1 {{ margin: 0 0 8px; font-size: 24px; letter-spacing: 0; }}
+    .hint {{ color: #b7bbc2; margin: 0; line-height: 1.45; }}
+    .message {{ border: 1px solid #30343a; background: #17191d; border-radius: 8px; margin: 16px 0; overflow: hidden; }}
+    .role {{ display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #23272e; color: #dbe7ff; font-weight: 700; }}
+    .content {{ padding: 14px; white-space: pre-wrap; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 14px; }}
+    .system .role {{ background: #2b3340; }}
+    .user .role {{ background: #233754; }}
+    .assistant .role {{ background: #2b3b32; }}
+    mark {{ background: #384d7a; color: #ffffff; padding: 0 3px; border-radius: 3px; }}
+    details {{ margin-top: 22px; border: 1px solid #30343a; border-radius: 8px; background: #17191d; }}
+    summary {{ cursor: pointer; padding: 12px 14px; font-weight: 700; }}
+    pre {{ white-space: pre-wrap; line-height: 1.45; margin: 0; padding: 14px; border-top: 1px solid #30343a; overflow-wrap: anywhere; }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Prompt envoye au LLM</h1>
+      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. Les blocs <code>GENERAL_CONTEXT</code> cadrent la reponse; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
+    </header>
+    {cards}
+    <details>
+      <summary>Voir le JSON exact envoye</summary>
+      <pre>{raw}</pre>
+    </details>
+  </main>
+</body>
+</html>"""
+
+
+def _render_prompt_message(message: dict[str, str]) -> str:
+    role = html.escape(message.get("role") or "unknown")
+    content = _highlight_prompt_content(html.escape(message.get("content") or ""))
+    return (
+        f"<section class='message {role}'>"
+        f"<div class='role'><span>{role.upper()}</span><span>message</span></div>"
+        f"<div class='content'>{content}</div>"
+        "</section>"
+    )
+
+
+def _highlight_prompt_content(content: str) -> str:
+    replacements = {
+        "GENERAL_CONTEXT": "<mark>GENERAL_CONTEXT</mark>",
+        "CITED_EVIDENCE": "<mark>CITED_EVIDENCE</mark>",
+        "Answer contract": "<mark>Answer contract</mark>",
+    }
+    for needle, replacement in replacements.items():
+        content = content.replace(needle, replacement)
+    return content
 
 
 if __name__ == "__main__":

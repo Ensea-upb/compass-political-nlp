@@ -1,6 +1,13 @@
 from datetime import date
 
-from apps.chat_web import answer_question, answer_question_payload, is_greeting, is_source_followup, latest_sources_from_history
+from apps.chat_web import (
+    answer_question,
+    answer_question_payload,
+    is_greeting,
+    is_source_followup,
+    latest_sources_from_history,
+    render_prompt_page,
+)
 
 
 class DummyEngine:
@@ -42,7 +49,7 @@ def test_chat_web_answer_question_calls_engine():
     )
 
     assert "Evidence-based answer" in answer
-    assert "Sources" in answer
+    assert "\n\nSources\n" not in answer
 
 
 def test_chat_web_payload_adds_prompt_link():
@@ -60,6 +67,7 @@ def test_chat_web_payload_adds_prompt_link():
 
     assert payload["prompt_url"].startswith("./prompt/")
     assert store
+    assert "\n\nSources\n" not in payload["answer"]
 
 
 def test_chat_web_reuses_last_sources_for_followup():
@@ -86,6 +94,18 @@ def test_chat_web_source_followup_helpers():
     assert latest_sources_from_history([
         {"role": "assistant", "content": "A\n\nSources\n- [S1] detail"}
     ]) == "- [S1] detail"
+
+
+def test_chat_web_prompt_page_is_human_readable():
+    page = render_prompt_page([
+        {"role": "system", "content": "Do not use outside knowledge."},
+        {"role": "user", "content": "GENERAL_CONTEXT\ncontext\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
+    ])
+
+    assert "Prompt envoye au LLM" in page
+    assert "<mark>GENERAL_CONTEXT</mark>" in page
+    assert "<mark>CITED_EVIDENCE</mark>" in page
+    assert "Voir le JSON exact envoye" in page
 
 def test_chat_web_uses_relative_ask_endpoint():
     from apps.chat_web import HTML

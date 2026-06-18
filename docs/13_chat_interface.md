@@ -13,7 +13,7 @@ User question
 -> parent/general context retrieval
 -> local vLLM through compass.llm_client
 -> answer with [S1], [S2] citations
--> inspectable prompt link
+-> inspectable human-readable prompt link
 ```
 
 If vLLM is not running, the engine returns an extractive answer from the retrieved passages instead of failing.
@@ -27,7 +27,7 @@ This matters for demos and audits: the model can understand the broader manifest
 
 The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text, splits oversized fragments, and can start new parent blocks when semantic cohesion drops. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
 
-After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens a local inspection page containing the exact message list sent to the OpenAI-compatible vLLM endpoint. This is for demonstration and auditability; source documents and secret keys are not added to that page beyond the prompt content already sent to the model.
+After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens a local inspection page containing a human-readable rendering of the exact message list sent to the OpenAI-compatible vLLM endpoint, plus a collapsible raw JSON view for auditability. Source details are no longer appended at the end of every chat answer; the answer itself should cite evidence inline with `[S1]`, `[S2]`, etc.
 
 For small local vLLM models, the chat also applies a prompt budget:
 
@@ -100,7 +100,7 @@ Expose port `7860` in the Onyxia service configuration if you want to open the U
 
 ## Expected Behavior
 
-When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages.
+When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages inline as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages. The chat interface does not append a separate source bibliography after each answer; use `Voir le prompt LLM` to inspect the evidence behind each `[Sx]`.
 
 The prompt receives two explicitly separated blocks:
 
@@ -109,7 +109,7 @@ The prompt receives two explicitly separated blocks:
 
 The prompt is calibrated to reduce hallucination risk: it forbids outside knowledge, asks the model to reject unsupported user premises cautiously, and requires an explicit insufficiency statement when the cited evidence does not answer the question.
 
-The source block is designed for demos. It includes metadata, segment id, and a short excerpt:
+The prompt inspection page is designed for demos. Its `CITED_EVIDENCE` block includes metadata, segment id, and excerpt-style evidence:
 
 ```text
 [S1] DEU | party=41320 | date=2009-09-01 | manifesto_api_text
@@ -133,7 +133,7 @@ If you ask a follow-up such as:
 What are the exact sources for your answer?
 ```
 
-`chat_web.py` returns the source block from the previous assistant answer instead of launching a new retrieval.
+`chat_web.py` points you to the `Voir le prompt LLM` page for the previous answer. That page contains the exact `CITED_EVIDENCE` block used to ground the inline `[Sx]` citations.
 
 If the answer cites evidence but then cannot print the cited passages, check that `COMPASS_CHROMA_DIR` and `COMPASS_SQLITE_PATH` point to the same ingestion run.
 
