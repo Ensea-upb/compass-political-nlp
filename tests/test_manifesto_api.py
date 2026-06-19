@@ -39,6 +39,28 @@ def test_extract_manifesto_text_from_documented_items():
     assert extract_manifesto_text(payload) == "First sentence.\nSecond sentence."
 
 
+def test_manifesto_ingestion_updates_and_persists_graph():
+    from examples.run_manifesto_pdf_ingestion import _update_graph
+
+    class Graph:
+        edge_count = 2
+
+        def __init__(self):
+            self.saved = False
+
+        def ingest(self, segments):
+            assert segments == ["segment"]
+            return 2
+
+        def save(self):
+            self.saved = True
+
+    graph = Graph()
+
+    assert _update_graph(graph, ["segment"]) == 2
+    assert graph.saved is True
+
+
 def test_metadata_uses_official_post_keys_and_preserves_missing_items(monkeypatch):
     calls = []
     api = ManifestoAPI(api_key="test-key")

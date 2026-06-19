@@ -180,7 +180,7 @@ HTML = """<!doctype html>
           throw new Error(payload.error || ('HTTP ' + response.status));
         }
         const meta = payload.route
-          ? `route=${payload.route} | récupérés=${payload.retrieval_count || 0} | preuves LLM=${payload.prompt_citation_count || 0} | sources affichées=${(payload.sources || []).length}`
+          ? `route=${payload.route} | récupérés=${payload.retrieval_count || 0} | preuves LLM=${payload.prompt_citation_count || 0} | relations graphe=${payload.graph_context_count || 0} | sources affichées=${(payload.sources || []).length}`
           : '';
         addMessage('assistant', payload.answer, 'assistant', payload.prompt_url, payload.sources_markdown, meta);
         if (payload.sources && payload.sources.length) {
@@ -222,9 +222,12 @@ def main() -> None:
     args = parser.parse_args()
 
     from compass.country_memory import CountryMemory
+    from compass.political_graph import PoliticalGraph
 
     cutoff = date.fromisoformat(args.as_of)
-    engine = ChatEngine(CountryMemory(args.country))
+    graph = PoliticalGraph(args.country)
+    graph.load()
+    engine = ChatEngine(CountryMemory(args.country), graph=graph)
     scope_data = describe_active_corpus(
         engine.memory,
         ChatRequest(question="scope", as_of=cutoff, party_id=args.party),
@@ -351,6 +354,7 @@ def answer_question_payload(
             "sources_markdown": "",
             "retrieval_count": 0,
             "prompt_citation_count": 0,
+            "graph_context_count": 0,
         }
     response = engine.ask(
         ChatRequest(
@@ -371,6 +375,7 @@ def answer_question_payload(
         "route": response.route,
         "retrieval_count": response.retrieval_count,
         "prompt_citation_count": response.prompt_citation_count,
+        "graph_context_count": len(getattr(response, "graph_context", [])),
     }
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex
@@ -433,7 +438,7 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
   <main>
     <header>
       <h1>Prompt envoye au LLM</h1>
-      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. <code>ANALYTICAL_CONTEXT</code> donne le cadre conceptuel, <code>GENERAL_CONTEXT</code> donne le contexte documentaire; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
+      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. <code>ANALYTICAL_CONTEXT</code> donne le cadre conceptuel, <code>GENERAL_CONTEXT</code> donne le contexte documentaire et <code>RELATIONAL_CONTEXT</code> contient des cooccurrences inferees; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
     </header>
     {cards}
     <details>
@@ -460,6 +465,7 @@ def _highlight_prompt_content(content: str) -> str:
     replacements = {
         "ANALYTICAL_CONTEXT": "<mark>ANALYTICAL_CONTEXT</mark>",
         "GENERAL_CONTEXT": "<mark>GENERAL_CONTEXT</mark>",
+        "RELATIONAL_CONTEXT": "<mark>RELATIONAL_CONTEXT</mark>",
         "CITED_EVIDENCE": "<mark>CITED_EVIDENCE</mark>",
         "Answer contract": "<mark>Answer contract</mark>",
     }

@@ -32,6 +32,21 @@ document brut
 
 `CountryMemory` combine SQLite pour les données structurées et ChromaDB pour les passages. Une collection `compass_country_<iso3>` est créée par pays. Les filtres temporels utilisent `doc_date_ord`, valeur numérique compatible avec les comparaisons Chroma.
 
+## Graphe politique
+
+L'ingestion alimente également `PoliticalGraph` à partir des chunks parents. Les entités nommées sont extraites par spaCy et les cooccurrences sont enregistrées comme relations **inférées**, avec date, parti, pays et segment source.
+
+```text
+segments parents
+→ extraction d'entités spaCy
+→ relations de cooccurrence typées
+→ political_graph_<iso3>.graphml
+→ query_party(party_id, as_of)
+→ contexte relationnel inféré
+```
+
+Un fichier GraphML distinct est utilisé par pays. Les identifiants de segments déjà traités sont persistés afin qu'une réingestion ne double pas les relations. Dans le pipeline complet, ce contexte rejoint `Diagnosis.graph_context`. Dans le chat, il n'est chargé que pour une question relationnelle et ne peut jamais être cité comme preuve `[Sx]`.
+
 ## Chunking et retrieval
 
 Le document est découpé en parents contextuels et enfants citables. Le chat recherche les enfants, rattache leur parent, fusionne dense et BM25, puis applique le cross-encoder configuré.

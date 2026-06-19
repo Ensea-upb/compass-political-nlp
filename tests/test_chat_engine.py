@@ -134,6 +134,60 @@ def test_chat_engine_prefers_hybrid_retrieval(monkeypatch):
     assert memory.hybrid_general_called is True
 
 
+def test_chat_injects_inferred_graph_context_for_relational_questions(monkeypatch):
+    class FakeGraph:
+        def __init__(self):
+            self.calls = []
+
+        def query_party(self, party_id, as_of, k_hops, top_k):
+            self.calls.append((party_id, as_of, k_hops, top_k))
+            return [{"summary": "[INFERRED] Test Party - alliance - Partner"}]
+
+    seen = {}
+    graph = FakeGraph()
+
+    def fake_complete(model_name, messages, **kwargs):
+        seen["prompt"] = messages[-1]["content"]
+        return "The manifesto mentions cooperation with partners [S1]."
+
+    monkeypatch.setattr(chat_engine, "complete_chat", fake_complete)
+    response = ChatEngine(
+        FakeMemory(), model_name="local-test-model", graph=graph,
+    ).ask(ChatRequest(
+        question="What alliances and partners does the party mention?",
+        as_of=date(2009, 9, 27),
+        party_id="P100",
+    ))
+
+    assert graph.calls
+    assert response.graph_context
+    assert "RELATIONAL_CONTEXT" in seen["prompt"]
+    assert "[R1] [INFERRED, NOT EVIDENCE]" in seen["prompt"]
+    assert response.citations[0].ref_id == "S1"
+
+
+def test_chat_rejects_graph_context_as_a_citation(monkeypatch):
+    class FakeGraph:
+        def query_party(self, **kwargs):
+            return [{"summary": "[INFERRED] Party - alliance - Partner"}]
+
+    monkeypatch.setattr(
+        chat_engine,
+        "complete_chat",
+        lambda *args, **kwargs: "The party has an alliance [R1].",
+    )
+    response = ChatEngine(
+        FakeMemory(), model_name="local-test-model", graph=FakeGraph(),
+    ).ask(ChatRequest(
+        question="What alliance does the party have?",
+        as_of=date(2009, 9, 27),
+        party_id="P100",
+    ))
+
+    assert response.llm_used is False
+    assert "Reponse extractive COMPASS" in response.answer
+
+
 def test_chat_engine_falls_back_when_llm_fails(monkeypatch):
     def broken_complete(*args, **kwargs):
         raise RuntimeError("vLLM offline")
@@ -332,11 +386,14 @@ def test_chat_prompt_requires_evidence_linked_claims():
     assert "Do not overinterpret" in system
     assert "Do not use outside knowledge" in system
     assert "Never cite [A]" in system
+    assert "RELATIONAL_CONTEXT" in system
+    assert "[R1]" in system
     assert "provided evidence is insufficient" in system
     assert "absence of evidence as evidence of absence" in system
     assert "list is exhaustive" in system
     assert "ANALYTICAL_CONTEXT - conceptual reading frame" in messages[-1]["content"]
     assert "GENERAL_CONTEXT - background only" in messages[-1]["content"]
+    assert "RELATIONAL_CONTEXT - inferred graph" in messages[-1]["content"]
     assert "CITED_EVIDENCE - the only claim-supporting evidence" in messages[-1]["content"]
     assert "Answer contract" in messages[-1]["content"]
 

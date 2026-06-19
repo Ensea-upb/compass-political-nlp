@@ -19,13 +19,14 @@ from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
 _MAX_GENERAL_CONTEXT_ITEMS = 1
+_MAX_RELATIONAL_CONTEXT_ITEMS = 6
 _MAX_PARENT_CONTEXT_CHARS = 90
 _MAX_GENERAL_CONTEXT_CHARS = 150
 _MAX_ANALYTICAL_CONTEXT_CHARS = 420
 _MAX_CHAT_HISTORY_MESSAGES = 1
 _MAX_CHAT_HISTORY_CHARS = 160
 _MAX_CHAT_OUTPUT_TOKENS = 350
-_ANSWER_REF_RE = re.compile(r"\[(A|C\d+|S\d+)\]")
+_ANSWER_REF_RE = re.compile(r"\[(A|C\d+|R\d+|S\d+)\]")
 _INSUFFICIENT_MARKERS = (
     "insufficient evidence",
     "provided evidence is insufficient",
@@ -157,6 +158,7 @@ class ChatResponse:
     llm_used: bool
     retrieval_count: int
     general_context: list[GeneralContext] = field(default_factory=list)
+    graph_context: list[dict[str, Any]] = field(default_factory=list)
     prompt_messages: list[dict[str, str]] = field(default_factory=list)
     route: str = "evidence_query"
     prompt_citation_count: int = 0
@@ -169,9 +171,15 @@ class AnswerContractError(RuntimeError):
 class ChatEngine:
     """Conversational RAG facade over a ``CountryMemory`` instance."""
 
-    def __init__(self, memory: Any, model_name: str | None = None) -> None:
+    def __init__(
+        self,
+        memory: Any,
+        model_name: str | None = None,
+        graph: Any | None = None,
+    ) -> None:
         self.memory = memory
         self.model_name = model_name or _default_chat_model()
+        self.graph = graph
 
     def _answer_segment_lookup(self, question: str, segment_ids: list[str]) -> ChatResponse:
         metadata_warning = ""
@@ -334,7 +342,14 @@ class ChatEngine:
         all_citations = build_citations(retrieved)
         citations = all_citations[:settings.chat_max_prompt_citations]
         general_context = retrieve_general_context(self.memory, question, request, retrieved)
-        messages = build_messages(question, citations, request, general_context)
+        graph_context = retrieve_graph_context(self.graph, question, request, scope)
+        messages = build_messages(
+            question,
+            citations,
+            request,
+            general_context,
+            graph_context,
+        )
         try:
             answer = complete_chat(
                 self.model_name,
@@ -355,6 +370,7 @@ class ChatEngine:
                 llm_used=True,
                 retrieval_count=len(retrieved),
                 general_context=general_context,
+                graph_context=graph_context,
                 prompt_messages=messages,
                 route=route,
                 prompt_citation_count=len(citations),
@@ -368,6 +384,7 @@ class ChatEngine:
                 llm_used=False,
                 retrieval_count=len(retrieved),
                 general_context=general_context,
+                graph_context=graph_context,
                 prompt_messages=messages,
                 route=route,
                 prompt_citation_count=len(citations),
@@ -546,6 +563,7 @@ def build_messages(
     citations: list[Citation],
     request: ChatRequest,
     general_context: list[GeneralContext] | None = None,
+    graph_context: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     prompt_citations = citations[:settings.chat_max_prompt_citations]
     evidence_context = "\n\n".join(
@@ -559,18 +577,21 @@ def build_messages(
         for citation in prompt_citations
     )
     general_context_text = format_general_context_for_prompt(general_context or [])
+    relational_context_text = format_graph_context_for_prompt(graph_context or [])
     analytical_context_text = build_analytical_context(question)
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
         "Your task is evidence-grounded analysis, not open-ended political commentary. "
         "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
-        "There are three inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, and CITED_EVIDENCE. "
+        "There are four inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, RELATIONAL_CONTEXT, and CITED_EVIDENCE. "
         "ANALYTICAL_CONTEXT gives a political-science reading frame; it is not factual evidence and must never be cited. "
         "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
+        "RELATIONAL_CONTEXT contains inferred entity co-occurrences from the political graph. It is not verified fact, "
+        "must never be cited, and must be ignored when it conflicts with CITED_EVIDENCE. "
         "CITED_EVIDENCE contains the only passages that may support claims. "
         "Every substantive political claim must end with an inline citation like [S1] or [S2]. "
-        "Never cite [A], [C1], [C2], or any analytical/general-context label. "
+        "Never cite [A], [C1], [C2], [R1], or any analytical/general/relational-context label. "
         "If the cited evidence does not answer the question, say that the provided evidence is insufficient and explain what is missing. "
         "If a user premise is not supported by the cited evidence, correct it cautiously instead of accepting it. "
         "Do not treat absence of evidence as evidence of absence. If the cited evidence mentions only one actor, "
@@ -594,6 +615,8 @@ def build_messages(
         f"{analytical_context_text}\n\n"
         "GENERAL_CONTEXT - background only, never cite this block:\n"
         f"{general_context_text}\n\n"
+        "RELATIONAL_CONTEXT - inferred graph co-occurrences only, never cite this block:\n"
+        f"{relational_context_text}\n\n"
         "CITED_EVIDENCE - the only claim-supporting evidence:\n"
         f"{evidence_context}\n\n"
         "Answer contract:\n"
@@ -601,7 +624,7 @@ def build_messages(
         "- Use [S1], [S2], etc. for every claim.\n"
         "- Never invent source ids. Use only the [S] ids present above.\n"
         "- Use ANALYTICAL_CONTEXT only to understand the political concept being asked about.\n"
-        "- Do not cite [A], [C1], or other analytical/general-context labels.\n"
+        "- Do not cite [A], [C1], [R1], or other analytical/general/relational-context labels.\n"
         "- If no [S] passage supports the answer, say evidence is insufficient.\n"
         "- If evidence is weak or absent, say so explicitly."
     )
@@ -686,6 +709,47 @@ def build_general_context_query(question: str) -> str:
     )
 
 
+def retrieve_graph_context(
+    graph: Any | None,
+    question: str,
+    request: ChatRequest,
+    scope: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return temporal party relations only for explicitly relational questions."""
+    if graph is None or not _is_relational_question(question):
+        return []
+    party_id = request.party_id or _single_scope_party_id(scope)
+    if not party_id:
+        return []
+    try:
+        return list(graph.query_party(
+            party_id=party_id,
+            as_of=request.as_of,
+            k_hops=2,
+            top_k=_MAX_RELATIONAL_CONTEXT_ITEMS,
+        ))
+    except Exception:
+        return []
+
+
+def _is_relational_question(question: str) -> bool:
+    normalized = _normalize_intent_text(question)
+    markers = (
+        "alliance", "coalition", "partenaire", "relation", "oppose", "opposition",
+        "rival", "adversaire", "fusion", "scission", "acteur", "avec qui",
+        "ally", "allies", "partner", "relationship", "opponent", "merger",
+        "split", "actor", "who does", "who is",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _single_scope_party_id(scope: dict[str, Any]) -> str | None:
+    parties = scope.get("parties") or []
+    if len(parties) != 1 or not isinstance(parties[0], dict):
+        return None
+    return _none_if_empty(parties[0].get("party_id"))
+
+
 def build_analytical_context(question: str) -> str:
     """Return a compact non-cited political-science frame for the prompt.
 
@@ -728,6 +792,20 @@ def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
             f"{_excerpt(item.text, max_chars=_MAX_GENERAL_CONTEXT_CHARS)}"
         )
     return "\n\n".join(lines)
+
+
+def format_graph_context_for_prompt(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "No relevant political-graph context retrieved."
+    lines = []
+    for index, item in enumerate(items[:_MAX_RELATIONAL_CONTEXT_ITEMS], start=1):
+        summary = str(item.get("summary") or "").strip()
+        if summary:
+            lines.append(
+                f"[R{index}] [INFERRED, NOT EVIDENCE] "
+                f"{_excerpt(summary, max_chars=260)}"
+            )
+    return "\n".join(lines) or "No relevant political-graph context retrieved."
 
 
 def _compact_parent_context(citation: Citation) -> str:
@@ -956,7 +1034,10 @@ def validate_llm_answer(
         raise AnswerContractError(f"unknown validation policy: {policy}")
 
     refs = _ANSWER_REF_RE.findall(text)
-    forbidden = [ref for ref in refs if ref == "A" or ref.startswith("C")]
+    forbidden = [
+        ref for ref in refs
+        if ref == "A" or ref.startswith("C") or ref.startswith("R")
+    ]
     if forbidden:
         raise AnswerContractError("answer cited analytical/general context")
 

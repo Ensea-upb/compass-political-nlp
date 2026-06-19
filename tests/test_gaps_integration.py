@@ -584,6 +584,47 @@ class TestGap3_PoliticalGraph:
         g2 = PoliticalGraph()
         g2.load(path)
         assert g2._graph.number_of_nodes() == self.g._graph.number_of_nodes()
+        assert g2._ingested_segment_ids == self.g._ingested_segment_ids
+
+    def test_country_graph_rejects_segments_from_another_country(self):
+        from compass.political_graph import PoliticalGraph
+
+        graph = PoliticalGraph("USA")
+        with pytest.raises(ValueError, match="outside graph country"):
+            graph.ingest([_seg("Parti Démocratique et Sénégal.", "foreign")])
+
+    def test_country_graph_uses_an_isolated_storage_path(self, tmp_path, monkeypatch):
+        from compass.config import settings
+        from compass.political_graph import PoliticalGraph
+
+        monkeypatch.setattr(settings, "graph_path", tmp_path / "political_graph.graphml")
+
+        assert PoliticalGraph("USA").storage_path == tmp_path / "political_graph_usa.graphml"
+        assert PoliticalGraph("SEN").storage_path == tmp_path / "political_graph_sen.graphml"
+
+    def test_graph_ingestion_is_idempotent(self):
+        segments = [_seg("Le Parti Démocratique s'allie avec le Sénégal.", "stable")]
+
+        self.g.ingest(segments)
+        first_edge_count = self.g.edge_count
+        second_new_edges = self.g.ingest(segments)
+
+        assert second_new_edges == 0
+        assert self.g.edge_count == first_edge_count
+
+    def test_query_party_does_not_mix_proofs_from_other_parties(self):
+        first = _seg("Parti Démocratique s'allie avec Union Nationale.", "party-a")
+        second = _seg("Parti Démocratique s'allie avec Union Nationale.", "party-b")
+        first.meta.party_id = "party_a"
+        second.meta.party_id = "party_b"
+        self.g.ingest([first, second])
+
+        results_a = self.g.query_party("party_a", as_of=date(2024, 3, 24))
+        results_b = self.g.query_party("party_b", as_of=date(2024, 3, 24))
+
+        assert results_a and results_b
+        assert all(item["weight"] == 1 for item in results_a)
+        assert all(item["weight"] == 1 for item in results_b)
 
 
 # ══════════════════════════════════════════════════════════════════════════

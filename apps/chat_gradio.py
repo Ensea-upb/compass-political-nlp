@@ -37,8 +37,11 @@ def main() -> None:
         raise SystemExit("Install the chat UI dependency first: pip install -r requirements-chat.txt") from exc
 
     from compass.country_memory import CountryMemory
+    from compass.political_graph import PoliticalGraph
 
-    engine = ChatEngine(CountryMemory(args.country))
+    graph = PoliticalGraph(args.country)
+    graph.load()
+    engine = ChatEngine(CountryMemory(args.country), graph=graph)
     cutoff = date.fromisoformat(args.as_of)
 
     def respond(message: str, history):

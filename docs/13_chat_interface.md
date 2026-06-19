@@ -11,6 +11,7 @@ question utilisateur
 → dense + BM25
 → contexte parent
 → cross-encoder
+→ contexte relationnel du graphe si la question le demande
 → construction du prompt
 → vLLM local
 → AnswerValidator
@@ -71,10 +72,11 @@ Pour une question politique, `CountryMemory.query_documents_hybrid()` :
 
 ## Structure du prompt
 
-Le prompt distingue trois blocs :
+Le prompt distingue quatre blocs :
 
 - `ANALYTICAL_CONTEXT` : grille de lecture politique, non citable ;
 - `GENERAL_CONTEXT` : contexte documentaire général, non citable ;
+- `RELATIONAL_CONTEXT` : relations de cooccurrence issues du graphe, explicitement inférées et non citables ;
 - `CITED_EVIDENCE` : passages `[S1]`, `[S2]`, etc., seuls autorisés à soutenir une affirmation.
 
 Chaque preuve contient son pays, son parti, sa date, son type de document, la raison de retrieval et un extrait.
@@ -101,7 +103,7 @@ Ces limites réduisent les erreurs `400 Bad Request` avec un contexte vLLM de 40
 
 Pour `evidence_query`, `AnswerValidator` refuse une réponse qui :
 
-- cite `[A]` ou `[Cx]` comme preuve ;
+- cite `[A]`, `[Cx]` ou `[Rx]` comme preuve ;
 - invente un identifiant `[Sx]` absent du prompt ;
 - produit une réponse politique sans citation ;
 - utilise une politique de validation inconnue.
@@ -119,7 +121,7 @@ Après une réponse LLM, `Voir le prompt LLM` ouvre un onglet d'inspection. Tous
 La page montre :
 
 - les messages système et utilisateur ;
-- les trois blocs de contexte et de preuve ;
+- les quatre blocs de contexte et de preuve ;
 - les métadonnées et scores de retrieval ;
 - le JSON exact envoyé à vLLM.
 
@@ -145,6 +147,7 @@ pip install -r requirements-onyxia.txt
 export COMPASS_DATA_DIR=$PWD/data/manifesto_ingestion
 export COMPASS_CHROMA_DIR=$PWD/data/manifesto_ingestion/chroma
 export COMPASS_SQLITE_PATH=$PWD/data/manifesto_ingestion/compass_structured.db
+export COMPASS_GRAPH_PATH=$PWD/data/manifesto_ingestion/political_graph.graphml
 
 export COMPASS_LLM_BACKEND=local
 export COMPASS_LLM_API_BASE=http://localhost:8000/v1

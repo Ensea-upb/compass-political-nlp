@@ -65,6 +65,7 @@ def main() -> None:
     parser.add_argument("--print-metadata", action="store_true", help="Print raw metadata for debugging URL fields")
     parser.add_argument("--limit", type=int, help="Limit the number of rows processed")
     parser.add_argument("--reset", action="store_true", help="Delete generated Manifesto PDF and index data before running")
+    parser.add_argument("--no-graph", action="store_true", help="Disable political graph extraction")
     args = parser.parse_args()
 
     rows = _load_rows(args)
@@ -83,15 +84,18 @@ def main() -> None:
     os.environ.setdefault("COMPASS_CHROMA_DIR", str(ROOT / "data" / "manifesto_ingestion" / "chroma"))
     os.environ.setdefault("COMPASS_SQLITE_PATH", str(ROOT / "data" / "manifesto_ingestion" / "compass_structured.db"))
     os.environ.setdefault("COMPASS_TRACE_DIR", str(ROOT / "data" / "manifesto_ingestion" / "traces"))
+    os.environ.setdefault("COMPASS_GRAPH_PATH", str(ROOT / "data" / "manifesto_ingestion" / "political_graph.graphml"))
     from compass.config import settings
     from compass.country_memory import CountryMemory
     from compass.document_pipeline import DocumentPipeline, make_meta
+    from compass.political_graph import PoliticalGraph
 
     settings.ensure_dirs()
 
     api = ManifestoAPI()
     pipeline = DocumentPipeline()
     memories: dict[str, CountryMemory] = {}
+    graphs: dict[str, PoliticalGraph] = {}
     report: list[dict[str, Any]] = []
 
     for row in rows:
@@ -123,6 +127,13 @@ def main() -> None:
                 continue
 
             memory = memories.setdefault(row.country_iso3.upper(), CountryMemory(row.country_iso3))
+            graph = None
+            if not args.no_graph:
+                country_key = row.country_iso3.upper()
+                if country_key not in graphs:
+                    graphs[country_key] = PoliticalGraph(country_key)
+                    graphs[country_key].load()
+                graph = graphs[country_key]
             if pdf_url:
                 pdf_path = args.download_dir / row.country_iso3.upper() / f"{_safe_name(row.key)}.pdf"
                 try:
@@ -140,7 +151,14 @@ def main() -> None:
                     )
                     segments = pipeline.ingest_pdf(pdf_path, meta)
                     memory.add_documents(segments)
-                    entry.update({"status": "ingested_pdf", "pdf_path": str(pdf_path), "segments": len(segments)})
+                    graph_edges = _update_graph(graph, segments)
+                    entry.update({
+                        "status": "ingested_pdf",
+                        "pdf_path": str(pdf_path),
+                        "segments": len(segments),
+                        "graph_new_edges": graph_edges,
+                        "graph_total_edges": graph.edge_count if graph else 0,
+                    })
                     print(f"{row.key}: downloaded PDF and indexed ({len(segments)} segments)")
                     report.append(entry)
                     continue
@@ -166,6 +184,7 @@ def main() -> None:
                 text_dir=args.text_dir,
                 translation=args.translation,
                 make_meta=make_meta,
+                graph=graph,
             )
             entry.update({"status": "ingested_api_text", **text_path})
             print(f"{row.key}: indexed API text fallback ({text_path['segments']} segments)")
@@ -210,6 +229,7 @@ def _ingest_text_fallback(
     text_dir: Path,
     translation: str | None,
     make_meta: Any,
+    graph: Any | None = None,
 ) -> dict[str, Any]:
     texts = api.texts_and_annotations([text_key], version=row.metadata_version, translation=translation)
     if not texts and text_key != row.key:
@@ -233,7 +253,22 @@ def _ingest_text_fallback(
     )
     segments = pipeline.ingest_text(api_text.text, meta)
     memory.add_documents(segments)
-    return {"text_key": api_text.key, "text_path": str(text_path), "segments": len(segments)}
+    graph_edges = _update_graph(graph, segments)
+    return {
+        "text_key": api_text.key,
+        "text_path": str(text_path),
+        "segments": len(segments),
+        "graph_new_edges": graph_edges,
+        "graph_total_edges": graph.edge_count if graph else 0,
+    }
+
+
+def _update_graph(graph: Any | None, segments: list[Any]) -> int:
+    if graph is None:
+        return 0
+    new_edges = graph.ingest(segments)
+    graph.save()
+    return new_edges
 
 def _load_rows(args: argparse.Namespace) -> list[ManifestoIngestionRow]:
     rows: list[ManifestoIngestionRow] = []

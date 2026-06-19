@@ -13,6 +13,7 @@ dataset core
 → sinon texts_and_annotations
 → DocumentPipeline
 → CountryMemory
+→ PoliticalGraph par pays
 → rapport JSON
 ```
 
@@ -78,6 +79,14 @@ python examples/run_manifesto_pdf_ingestion.py \
 
 Le CSV peut déjà contenir plusieurs pays. Le script crée une `CountryMemory` par valeur `country_iso3` et place toutes les collections dans le même dossier Chroma.
 
+Il crée aussi un graphe isolé pour chaque pays. Après chaque document, les chunks parents sont analysés, puis le graphe est sauvegardé. L'option `--no-graph` permet exceptionnellement de désactiver cette étape.
+
+L'extraction d'entités nécessite un modèle spaCy :
+
+```bash
+python -m spacy download xx_ent_wiki_sm
+```
+
 ## Générer un CSV depuis le core
 
 ```bash
@@ -112,7 +121,10 @@ Exemple de résultat normal :
 - textes API : `data/manifesto_texts/<PAYS>/` ;
 - Chroma : `data/manifesto_ingestion/chroma/` ;
 - SQLite : `data/manifesto_ingestion/compass_structured.db` ;
+- graphes : `data/manifesto_ingestion/political_graph_<pays>.graphml` ;
 - rapport : `outputs/manifesto_pdf_ingestion_report.json`.
+
+Le rapport contient `graph_new_edges` et `graph_total_edges` pour chaque document traité.
 
 ## Limites actuelles
 

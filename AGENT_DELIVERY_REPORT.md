@@ -46,11 +46,22 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - tests directs ajoutés pour l'agrégation, la suffisance, le diagnostic, la temporalité et la mémoire générale ;
 - Ruff ajouté aux dépendances de test et à GitHub Actions.
 
+## Intégration du graphe politique
+
+- l'ingestion PDF ou `texts_and_annotations` appelle désormais `PoliticalGraph.ingest()` puis `save()` ;
+- le mode `run_real_architecture.py full` charge, alimente et transmet le graphe à `CompassRunner` ;
+- `chat_web.py` et `chat_gradio.py` chargent automatiquement le graphe du pays actif ;
+- les questions relationnelles ajoutent un bloc `RELATIONAL_CONTEXT` au prompt ;
+- les relations `[Rx]` sont explicitement inférées, non citables et rejetées par `AnswerValidator` si le LLM tente de les utiliser comme preuve ;
+- les fichiers GraphML sont isolés par pays ;
+- les segments déjà ingérés sont mémorisés, ce qui rend la mise à jour idempotente ;
+- chaque arête conserve le pays, le parti, la date et le segment source.
+
 ## Vérifications exécutées
 
 ```text
 python -m pytest -q
-116 passed
+123 passed
 
 ruff check src apps tests examples scripts
 All checks passed!
@@ -70,6 +81,7 @@ Une recherche explicite dans `src/` et `apps/` a également vérifié l'absence 
 2. Le détecteur déterministe de comparaison s'appuie sur les partis connus de la mémoire et sur la forme de la question. Le mode LLM reste disponible pour diagnostic, pas comme dépendance obligatoire.
 3. La démonstration États-Unis nécessite toujours l'ingestion réelle d'un corpus USA sur Onyxia. Elle n'est pas vérifiable depuis cet environnement sans accès à l'API Manifesto et aux données persistées.
 4. `chat_gradio.py` reste un prototype optionnel. L'interface recommandée est `chat_web.py`.
+5. L'extraction du graphe exige un modèle NER spaCy installé. Sans modèle, l'ingestion documentaire continue mais le graphe reste vide et un avertissement est journalisé.
 
 ## Verdict
 

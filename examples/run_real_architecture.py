@@ -127,6 +127,7 @@ def run_smoke() -> None:
         "lingua",
         "litellm",
         "networkx",
+        "spacy",
     ]
     missing = [name for name in optional if importlib.util.find_spec(name) is None]
     if missing:
@@ -144,6 +145,7 @@ def run_full(reset: bool, variables: list[str] | None = None) -> None:
     from compass.general_memory import GeneralMemory
     from compass.active_search import ActiveSearchEngine
     from compass.orchestrator import CompassRunner
+    from compass.political_graph import PoliticalGraph
     from compass.schemas import CaseKey, SourceReliability
     from compass.vparty_registry import VPartyRegistry
 
@@ -198,6 +200,10 @@ def run_full(reset: bool, variables: list[str] | None = None) -> None:
         ),
     )
     country.add_documents(segments)
+    graph = PoliticalGraph("CIV")
+    graph.load()
+    graph.ingest(segments)
+    graph.save()
 
     general = GeneralMemory()
     general.add(
@@ -219,6 +225,7 @@ def run_full(reset: bool, variables: list[str] | None = None) -> None:
         general=general,
         registry=VPartyRegistry(demo_registry),
         search=ActiveSearchEngine(pipeline),
+        graph=graph,
     )
     case = CaseKey(
         country_iso3="CIV",
@@ -244,6 +251,7 @@ def _configure_full_environment(reset: bool) -> None:
     os.environ.setdefault("COMPASS_CHROMA_DIR", str(data_dir / "chroma"))
     os.environ.setdefault("COMPASS_SQLITE_PATH", str(data_dir / "compass_structured.db"))
     os.environ.setdefault("COMPASS_TRACE_DIR", str(data_dir / "traces"))
+    os.environ.setdefault("COMPASS_GRAPH_PATH", str(data_dir / "political_graph.graphml"))
     os.environ.setdefault("COMPASS_SEARCH_MAX_ITERATIONS", "0")
     os.environ.setdefault("COMPASS_SUFFICIENCY_THRESHOLD", "0.0")
 

@@ -130,12 +130,13 @@ def test_chat_web_forwards_structured_previous_sources():
 def test_chat_web_prompt_page_is_human_readable():
     page = render_prompt_page([
         {"role": "system", "content": "Do not use outside knowledge."},
-        {"role": "user", "content": "ANALYTICAL_CONTEXT\nframe\n\nGENERAL_CONTEXT\ncontext\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
+        {"role": "user", "content": "ANALYTICAL_CONTEXT\nframe\n\nGENERAL_CONTEXT\ncontext\n\nRELATIONAL_CONTEXT\n[R1] inferred\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
     ])
 
     assert "Prompt envoye au LLM" in page
     assert "<mark>ANALYTICAL_CONTEXT</mark>" in page
     assert "<mark>GENERAL_CONTEXT</mark>" in page
+    assert "<mark>RELATIONAL_CONTEXT</mark>" in page
     assert "<mark>CITED_EVIDENCE</mark>" in page
     assert "Voir le JSON exact envoye" in page
 

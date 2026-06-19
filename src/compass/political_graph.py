@@ -49,6 +49,52 @@ _MERGER_KEYWORDS = {
 }
 
 
+def _party_edge_view(
+    data: dict,
+    party_id: str,
+    country_iso3: str | None,
+    cutoff: str,
+) -> dict | None:
+    """Build a party- and time-scoped edge view from its provenance records."""
+    country = str(country_iso3 or "").upper()
+    try:
+        proofs = json.loads(data.get("proofs", "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        proofs = []
+    matching = [
+        proof for proof in proofs
+        if str(proof.get("party_id") or "") == party_id
+        and str(proof.get("date") or "9999") <= cutoff
+        and (
+            not country
+            or str(proof.get("country_iso3") or country).upper() == country
+        )
+    ]
+    if matching:
+        dates = sorted(str(proof.get("date") or "") for proof in matching)
+        view = dict(data)
+        view.update({
+            "weight": len(matching),
+            "party_id": party_id,
+            "country_iso3": country or data.get("country_iso3", ""),
+            "date_first_seen": dates[0],
+            "date_last_seen": dates[-1],
+            "doc_type": str(matching[-1].get("doc_type") or data.get("doc_type") or ""),
+            "proofs": json.dumps(matching),
+        })
+        return view
+
+    # Backward compatibility for graphs persisted before per-proof provenance.
+    country_ok = not country or str(data.get("country_iso3") or country).upper() == country
+    if (
+        country_ok
+        and data.get("party_id") == party_id
+        and data.get("date_first_seen", "9999") <= cutoff
+    ):
+        return dict(data)
+    return None
+
+
 class PoliticalGraph:
     """Political knowledge graph with temporal edges.
 
@@ -57,8 +103,10 @@ class PoliticalGraph:
     applied to edges, allowing historical graph queries at election time.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, country_iso3: str | None = None) -> None:
+        self.country = str(country_iso3 or "").upper() or None
         self._graph: nx.DiGraph = nx.DiGraph()
+        self._ingested_segment_ids: set[str] = set()
         self._spacy_nlp = self._load_spacy()
 
     @staticmethod
@@ -95,10 +143,26 @@ class PoliticalGraph:
             logger.warning("C02b: spaCy unavailable, skipping graph extraction.")
             return 0
 
+        if self.country:
+            mismatched = [
+                seg.segment_id for seg in segments
+                if seg.meta.country_iso3.upper() != self.country
+            ]
+            if mismatched:
+                raise ValueError(
+                    f"{len(mismatched)} segment(s) outside graph country {self.country}: "
+                    f"{mismatched[:3]}"
+                )
+
+        parents = [seg for seg in segments if seg.parent_segment_id is None]
+        source_segments = parents or segments
         new_edges = 0
-        for seg in segments:
+        for seg in source_segments:
+            if seg.segment_id in self._ingested_segment_ids:
+                continue
             doc = self._spacy_nlp(seg.text[:1000])
             entities = [ent for ent in doc.ents if ent.label_ in _POLITICAL_ENT_TYPES]
+            self._ingested_segment_ids.add(seg.segment_id)
             if not entities:
                 continue
 
@@ -134,6 +198,8 @@ class PoliticalGraph:
                         "date": seg_date.isoformat(),
                         "doc_type": doc_type,
                         "party_id": party_id,
+                        "country_iso3": seg.meta.country_iso3.upper(),
+                        "segment_id": seg.segment_id,
                         "regime": "inferred_cooccurrence",
                     }
                     if self._graph.has_edge(src, tgt):
@@ -144,6 +210,10 @@ class PoliticalGraph:
                         proofs = json.loads(edge.get("proofs", "[]"))
                         proofs.append(proof)
                         edge["proofs"] = json.dumps(proofs[-20:])
+                        party_ids = set(json.loads(edge.get("party_ids", "[]")))
+                        if party_id:
+                            party_ids.add(party_id)
+                        edge["party_ids"] = json.dumps(sorted(party_ids))
                     else:
                         self._graph.add_edge(
                             src,
@@ -155,6 +225,9 @@ class PoliticalGraph:
                             date_last_seen=seg_date.isoformat(),
                             doc_type=doc_type,
                             party_id=party_id,
+                            party_ids=json.dumps([party_id] if party_id else []),
+                            country_iso3=seg.meta.country_iso3.upper(),
+                            segment_id=seg.segment_id,
                             proofs=json.dumps([proof]),
                         )
                         new_edges += 1
@@ -176,21 +249,19 @@ class PoliticalGraph:
         top_k: int = 10,
     ) -> list[dict]:
         """Returns temporal relation summaries for a party neighborhood."""
+        cutoff = as_of.isoformat()
+        filtered = nx.DiGraph()
         party_nodes: set[str] = set()
         for src, tgt, data in self._graph.edges(data=True):
-            if data.get("party_id") == party_id:
+            party_view = _party_edge_view(data, party_id, self.country, cutoff)
+            if party_view is not None:
+                filtered.add_edge(src, tgt, **party_view)
                 party_nodes.add(src)
                 party_nodes.add(tgt)
 
         if not party_nodes:
             logger.info("C02b: no graph nodes found for party %s", party_id)
             return []
-
-        cutoff = as_of.isoformat()
-        filtered = nx.DiGraph()
-        for src, tgt, data in self._graph.edges(data=True):
-            if data.get("date_first_seen", "9999") <= cutoff:
-                filtered.add_edge(src, tgt, **data)
 
         neighborhood: set[str] = set(party_nodes)
         frontier = set(party_nodes)
@@ -251,7 +322,8 @@ class PoliticalGraph:
         cutoff = as_of.isoformat()
         results = []
         for src, tgt, data in self._graph.edges(nbunch=[node_id], data=True):
-            if data.get("date_first_seen", "9999") <= cutoff:
+            country_ok = not self.country or data.get("country_iso3") in {None, "", self.country}
+            if country_ok and data.get("date_first_seen", "9999") <= cutoff:
                 tgt_label = self._graph.nodes.get(tgt, {}).get("label", tgt)
                 relation = data.get("relation", "co_mention")
                 results.append({
@@ -265,8 +337,13 @@ class PoliticalGraph:
 
     def save(self, path: Path | None = None) -> None:
         """Persists the graph as GraphML."""
-        target = path or settings.graph_path
+        target = path or self.storage_path
         target.parent.mkdir(parents=True, exist_ok=True)
+        self._graph.graph["ingested_segment_ids"] = json.dumps(
+            sorted(self._ingested_segment_ids)
+        )
+        if self.country:
+            self._graph.graph["country_iso3"] = self.country
         nx.write_graphml(self._graph, str(target))
         logger.info(
             "C02b: graph saved (%d nodes, %d edges) -> %s",
@@ -277,16 +354,40 @@ class PoliticalGraph:
 
     def load(self, path: Path | None = None) -> None:
         """Loads a persisted GraphML graph if it exists."""
-        target = path or settings.graph_path
+        target = path or self.storage_path
         if not target.exists():
             logger.info("C02b: no persisted graph found at %s, starting empty.", target)
             return
         self._graph = nx.read_graphml(str(target))
+        stored_country = str(self._graph.graph.get("country_iso3") or "").upper()
+        if self.country and stored_country and stored_country != self.country:
+            raise ValueError(
+                f"Graph country mismatch: expected {self.country}, found {stored_country}"
+            )
+        try:
+            self._ingested_segment_ids = set(json.loads(
+                self._graph.graph.get("ingested_segment_ids", "[]")
+            ))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self._ingested_segment_ids = set()
         logger.info(
             "C02b: graph loaded (%d nodes, %d edges)",
             self._graph.number_of_nodes(),
             self._graph.number_of_edges(),
         )
+
+    @property
+    def storage_path(self) -> Path:
+        """Country-isolated GraphML path derived from the configured base path."""
+        base = settings.graph_path
+        if not self.country:
+            return base
+        suffix = base.suffix or ".graphml"
+        return base.with_name(f"{base.stem}_{self.country.lower()}{suffix}")
+
+    @property
+    def edge_count(self) -> int:
+        return self._graph.number_of_edges()
 
     @staticmethod
     def _normalize(text: str) -> str:
