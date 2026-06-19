@@ -21,6 +21,14 @@ User question
 
 If vLLM is not running, the engine returns an extractive answer from the retrieved passages instead of failing.
 
+Before retrieval, the chat routes each request:
+
+- `direct_lookup`: an explicit segment id is fetched directly;
+- `corpus_scope`: questions such as `tu es connecte a quel corpus ?` receive a deterministic session-scope answer without retrieval or LLM generation;
+- `evidence_query`: political questions run through hybrid retrieval, generation, and `AnswerValidator`.
+
+This prevents metadata questions from retrieving unrelated manifesto fragments or being rejected for missing `[Sx]` citations.
+
 The chat now separates three kinds of prompt material:
 
 - cited evidence: short child segments used as proof and exposed as `[S1]`, `[S2]`;

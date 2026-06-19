@@ -13,6 +13,7 @@ from compass.chat.engine import (
     format_citations,
     format_general_context_for_prompt,
     infer_answer_language,
+    route_chat_question,
     strip_appended_sources,
     validate_llm_answer,
 )
@@ -152,6 +153,40 @@ def test_chat_engine_falls_back_when_llm_answers_without_citation(monkeypatch):
 
     assert response.llm_used is False
     assert "Reponse extractive COMPASS" in response.answer
+
+
+def test_chat_engine_routes_corpus_scope_without_retrieval_or_llm(monkeypatch):
+    memory = FakeMemory()
+    memory.country = "DEU"
+
+    def fail_retrieval(*args, **kwargs):
+        raise AssertionError("retrieval must not run for corpus scope")
+
+    def fail_llm(*args, **kwargs):
+        raise AssertionError("LLM must not run for corpus scope")
+
+    memory.query_documents = fail_retrieval
+    monkeypatch.setattr(chat_engine, "complete_chat", fail_llm)
+    response = ChatEngine(memory, model_name="local-test-model").ask(
+        ChatRequest(
+            question="tu es connecte a quel corpus ?",
+            as_of=date(2009, 9, 27),
+            party_id="41320",
+        )
+    )
+
+    assert response.llm_used is False
+    assert response.retrieval_count == 0
+    assert "DEU" in response.answer
+    assert "41320" in response.answer
+    assert "2009-09-27" in response.answer
+    assert "ChromaDB" in response.answer
+
+
+def test_chat_question_router_distinguishes_scope_lookup_and_evidence():
+    assert route_chat_question("tu es connecte a quel corpus ?") == "corpus_scope"
+    assert route_chat_question("je veux doc1:p303c001") == "direct_lookup"
+    assert route_chat_question("Que dit le parti sur la democratie ?") == "evidence_query"
 
 
 def test_build_citations_and_format_sources():

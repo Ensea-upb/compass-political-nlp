@@ -9,6 +9,7 @@ reasoning, validation, or schemas.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -191,14 +192,38 @@ class ChatEngine:
             retrieval_count=len(citations),
         )
 
+    def _answer_corpus_scope(self, request: ChatRequest) -> ChatResponse:
+        """Describe the active corpus without retrieval or LLM generation."""
+        country = str(getattr(self.memory, "country", "unknown") or "unknown").upper()
+        party = request.party_id or "all indexed parties"
+        answer = (
+            "Je suis connecte a la memoire documentaire COMPASS indexee pour cette session.\n\n"
+            f"- Pays : {country}\n"
+            f"- Parti : {party}\n"
+            f"- Date limite des documents : {request.as_of.isoformat()}\n"
+            "- Stockage : index vectoriel ChromaDB local\n\n"
+            "Je reponds uniquement a partir des documents deja ingeres dans cet index; "
+            "je n'interroge pas Internet pendant la conversation."
+        )
+        return ChatResponse(
+            answer=answer,
+            citations=[],
+            model_used=None,
+            llm_used=False,
+            retrieval_count=0,
+        )
+
     def ask(self, request: ChatRequest) -> ChatResponse:
         """Answer a question using existing indexed COMPASS documents."""
         question = request.question.strip()
         if not question:
             raise ValueError("Question vide.")
-        segment_ids = extract_segment_ids(question)
-        if segment_ids:
+        route = route_chat_question(question)
+        if route == "direct_lookup":
+            segment_ids = extract_segment_ids(question)
             return self._answer_segment_lookup(question, segment_ids)
+        if route == "corpus_scope":
+            return self._answer_corpus_scope(request)
         retrieved = query_evidence(
             self.memory,
             build_retrieval_query(question),
@@ -527,6 +552,34 @@ def extract_segment_ids(text: str) -> list[str]:
             seen.add(match)
             ids.append(match)
     return ids
+
+
+def route_chat_question(question: str) -> str:
+    """Route a question before retrieval and answer validation."""
+    if extract_segment_ids(question):
+        return "direct_lookup"
+    normalized = _normalize_intent_text(question)
+    corpus_patterns = (
+        "quel corpus",
+        "a quel corpus",
+        "connecte a quel corpus",
+        "connecte au corpus",
+        "quelle base de donnees",
+        "quelles donnees utilises tu",
+        "quelles donnees utilise le systeme",
+        "what corpus",
+        "which corpus",
+        "which dataset",
+        "what data are you connected to",
+    )
+    if any(pattern in normalized for pattern in corpus_patterns):
+        return "corpus_scope"
+    return "evidence_query"
+
+
+def _normalize_intent_text(text: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return " ".join(ascii_text.lower().replace("'", " ").split())
 
 
 def infer_answer_language(question: str) -> str:
