@@ -2,7 +2,7 @@
 
 Run on Onyxia after ingesting documents:
 
-    python apps/chat_gradio.py --country DEU --as-of 2009-09-27 --party 41320
+    python apps/chat_gradio.py --country <ISO3> --as-of <YYYY-MM-DD> --party <PARTY_ID>
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from compass.chat.engine import format_citations
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Launch COMPASS Chat over an indexed country memory.")
-    parser.add_argument("--country", required=True, help="Country ISO3, for example DEU")
+    parser.add_argument("--country", required=True, help="Three-letter country ISO3 code")
     parser.add_argument("--as-of", required=True, help="Temporal cutoff date, YYYY-MM-DD")
     parser.add_argument("--party", help="Optional party id filter")
     parser.add_argument("--k", type=int, default=8, help="Number of evidence segments to retrieve")

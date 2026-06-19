@@ -22,3 +22,6 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      - name: Run Ruff
+        run: ruff check src apps tests examples scripts

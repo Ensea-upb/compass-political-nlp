@@ -61,9 +61,10 @@ class CompassRunner:
         """Traite toutes les variables demandées pour un cas, avec traçabilité.
 
         Returns:
-            Une FinalAnswer (score ou abstention) par variable. Les exceptions
-            de garde-fous (gate R-1, fuite temporelle) interrompent la variable
-            concernée et sont tracées — jamais avalées en silence.
+            Une FinalAnswer (score ou abstention) par variable lorsque le cas
+            aboutit. Toute exception de garde-fou (gate R-1, fuite temporelle)
+            interrompt le cas complet et remonte à l'appelant ; elle n'est
+            jamais transformée silencieusement en abstention.
         """
         trace = TraceLogger(f"{case.country_iso3}_{case.party_id}_{case.election_id}")
         trace.record("case_start", case=case, variables=variable_ids)

@@ -139,6 +139,12 @@ class CompassSettings(LLMConfig):
     nli_model: str = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
     political_classifier: str = "mlburnham/Political_DEBATE_large_v1.0"
 
+    # --- Chat RAG : budgets de preuve et garde-fou sémantique optionnel ---
+    chat_max_prompt_citations: int = 4
+    chat_max_evidence_text_chars: int = 420
+    chat_semantic_validation_enabled: bool = False
+    chat_nli_entailment_threshold: float = 0.65
+
     search_max_queries: int = 8
     search_max_iterations: int = 2
     sufficiency_threshold: float = 0.6  # provisoire — à calibrer sur courbe risque-couverture

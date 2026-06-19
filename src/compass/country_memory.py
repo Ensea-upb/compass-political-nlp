@@ -209,6 +209,77 @@ class CountryMemory:
             for sid, doc, meta in zip(res["ids"], res["documents"], metadatas)
         ]
 
+    def describe_corpus(
+        self,
+        as_of: date | None = None,
+        party_id: str | None = None,
+    ) -> dict:
+        """Return a runtime profile of documents actually present in the index.
+
+        The chat uses this method for scope answers and warnings. No country,
+        party, document count, or date is inferred from demo configuration.
+        """
+        clauses: list[dict] = []
+        if as_of is not None:
+            clauses.append({"doc_date_ord": {"$lte": as_of.toordinal()}})
+        if party_id:
+            clauses.append({"party_id": party_id})
+        where = None
+        if clauses:
+            where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        kwargs = {"include": ["metadatas"]}
+        if where is not None:
+            kwargs["where"] = where
+        try:
+            result = self._col.get(**kwargs)
+        except Exception:
+            result = self._col.get(include=["metadatas"])
+
+        records: list[tuple[str, dict]] = []
+        for segment_id, metadata in zip(
+            result.get("ids") or [],
+            result.get("metadatas") or [],
+        ):
+            meta = metadata or {}
+            if as_of is not None and str(meta.get("doc_date") or "") > as_of.isoformat():
+                continue
+            if party_id and str(meta.get("party_id") or "") != party_id:
+                continue
+            records.append((str(segment_id), meta))
+
+        party_ids = sorted({
+            str(meta.get("party_id") or "").strip()
+            for _, meta in records
+            if str(meta.get("party_id") or "").strip()
+        })
+        party_names: dict[str, str] = {}
+        if party_ids:
+            placeholders = ",".join("?" for _ in party_ids)
+            rows = self._conn.execute(
+                f"SELECT party_id, name FROM parties WHERE party_id IN ({placeholders})",
+                tuple(party_ids),
+            ).fetchall()
+            party_names = {str(row[0]): str(row[1]) for row in rows if row[1]}
+
+        doc_ids = {
+            str(meta.get("doc_id") or "").strip() or segment_id.split(":", 1)[0]
+            for segment_id, meta in records
+        }
+        return {
+            "country_iso3": self.country,
+            "n_documents": len(doc_ids),
+            "parties": [
+                {"party_id": value, "name": party_names.get(value)}
+                for value in party_ids
+            ],
+            "document_dates": sorted({
+                str(meta.get("doc_date")) for _, meta in records if meta.get("doc_date")
+            }),
+            "document_types": sorted({
+                str(meta.get("doc_type")) for _, meta in records if meta.get("doc_type")
+            }),
+        }
+
     def query_documents(
         self, question: str, as_of: date, k: int = 12,
         party_id: str | None = None, include_unverified: bool = False,

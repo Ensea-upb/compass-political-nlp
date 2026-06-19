@@ -23,6 +23,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from compass.chat import ChatEngine, ChatRequest
+from compass.chat.engine import (
+    citation_to_payload,
+    describe_active_corpus,
+    format_citations,
+)
 
 HTML = """<!doctype html>
 <html lang="en">
@@ -55,6 +60,13 @@ HTML = """<!doctype html>
     .routing label:first-of-type span { border-radius: 6px 0 0 6px; }
     .routing label:last-of-type span { border-left: 0; border-radius: 0 6px 6px 0; }
     .routing input:checked + span { background: #2d5596; border-color: #568bf0; color: #ffffff; }
+    .hidden { display: none; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; }
+    .examples button { width: auto; min-height: 34px; padding: 0 10px; background: #252a31; border: 1px solid #3a3f47; font-weight: 500; }
+    .response-meta { margin-top: 10px; color: #aeb4bd; font-size: 12px; }
+    .sources { margin-top: 10px; border-top: 1px solid #3a3f47; padding-top: 8px; }
+    .sources summary { cursor: pointer; color: #bcd0ff; }
+    .sources pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, Consolas, monospace; color: #d7dae0; }
   </style>
 </head>
 <body>
@@ -63,7 +75,7 @@ HTML = """<!doctype html>
       <h1>COMPASS Chat</h1>
       <div class="scope">__SCOPE__</div>
     </header>
-    <div class="routing" role="group" aria-label="Mode de routage">
+    <div class="routing __ROUTING_CLASS__" role="group" aria-label="Mode de routage">
       <strong>Routage</strong>
       <label>
         <input type="radio" name="routing_mode" value="deterministic" checked>
@@ -73,6 +85,11 @@ HTML = """<!doctype html>
         <input type="radio" name="routing_mode" value="llm">
         <span>LLM</span>
       </label>
+    </div>
+    <div class="examples" aria-label="Exemples de questions">
+      <button type="button" data-question="Que dit le parti sur la démocratie ?">Démocratie</button>
+      <button type="button" data-question="Quelles priorités économiques apparaissent dans le manifeste ?">Économie</button>
+      <button type="button" data-question="Tu es connecté à quel corpus ?">Corpus actif</button>
     </div>
     <section id="chat" aria-live="polite">
       <div class="msg assistant">Bonjour. Pose une question sur le corpus indexe, par exemple: What does the party say about democracy?</div>
@@ -88,8 +105,9 @@ HTML = """<!doctype html>
     const question = document.getElementById('question');
     const send = document.getElementById('send');
     const history = [];
+    let lastSources = [];
 
-    function addMessage(role, text, cls, promptUrl) {
+    function addMessage(role, text, cls, promptUrl, sourcesMarkdown, metaText) {
       const div = document.createElement('div');
       div.className = 'msg ' + (cls || role);
       div.textContent = text;
@@ -111,6 +129,23 @@ HTML = """<!doctype html>
         div.appendChild(document.createElement('br'));
         div.appendChild(link);
       }
+      if (metaText) {
+        const meta = document.createElement('div');
+        meta.className = 'response-meta';
+        meta.textContent = metaText;
+        div.appendChild(meta);
+      }
+      if (sourcesMarkdown) {
+        const details = document.createElement('details');
+        details.className = 'sources';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Preuves utilisées';
+        const pre = document.createElement('pre');
+        pre.textContent = sourcesMarkdown;
+        details.appendChild(summary);
+        details.appendChild(pre);
+        div.appendChild(details);
+      }
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
@@ -130,6 +165,7 @@ HTML = """<!doctype html>
           body: JSON.stringify({
             question: text,
             history,
+            last_sources: lastSources,
             routing_mode: document.querySelector('input[name="routing_mode"]:checked').value
           })
         });
@@ -143,7 +179,13 @@ HTML = """<!doctype html>
         if (!response.ok || payload.error) {
           throw new Error(payload.error || ('HTTP ' + response.status));
         }
-        addMessage('assistant', payload.answer, 'assistant', payload.prompt_url);
+        const meta = payload.route
+          ? `route=${payload.route} | récupérés=${payload.retrieval_count || 0} | preuves LLM=${payload.prompt_citation_count || 0} | sources affichées=${(payload.sources || []).length}`
+          : '';
+        addMessage('assistant', payload.answer, 'assistant', payload.prompt_url, payload.sources_markdown, meta);
+        if (payload.sources && payload.sources.length) {
+          lastSources = payload.sources;
+        }
         history.push({role: 'assistant', content: payload.answer});
       } catch (err) {
         addMessage('assistant', 'Erreur COMPASS Chat: ' + err.message, 'error');
@@ -151,6 +193,12 @@ HTML = """<!doctype html>
         send.disabled = false;
         question.focus();
       }
+    });
+    document.querySelectorAll('[data-question]').forEach((button) => {
+      button.addEventListener('click', () => {
+        question.value = button.dataset.question;
+        question.focus();
+      });
     });
   </script>
 </body>
@@ -160,19 +208,28 @@ HTML = """<!doctype html>
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Launch dependency-light COMPASS web chat.")
-    parser.add_argument("--country", required=True, help="Country ISO3, for example DEU")
+    parser.add_argument("--country", required=True, help="Three-letter country ISO3 code")
     parser.add_argument("--as-of", required=True, help="Temporal cutoff date, YYYY-MM-DD")
     parser.add_argument("--party", help="Optional party id filter")
     parser.add_argument("--k", type=int, default=8, help="Number of evidence segments to retrieve")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument(
+        "--debug-routing",
+        action="store_true",
+        help="Show the deterministic/LLM routing selector in the interface",
+    )
     args = parser.parse_args()
 
     from compass.country_memory import CountryMemory
 
     cutoff = date.fromisoformat(args.as_of)
     engine = ChatEngine(CountryMemory(args.country))
-    scope = f"Corpus: {args.country.upper()} | as_of={cutoff.isoformat()} | party={args.party or 'all'}"
+    scope_data = describe_active_corpus(
+        engine.memory,
+        ChatRequest(question="scope", as_of=cutoff, party_id=args.party),
+    )
+    scope = format_scope_banner(scope_data, cutoff)
     prompt_store: dict[str, list[dict[str, str]]] = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -184,8 +241,11 @@ def main() -> None:
             if path not in {"/", "/index.html"}:
                 self._send_json({"error": "not found"}, status=404)
                 return
-            html = HTML.replace("__SCOPE__", scope)
-            data = html.encode("utf-8")
+            html_page = HTML.replace("__SCOPE__", html.escape(scope)).replace(
+                "__ROUTING_CLASS__",
+                "" if args.debug_routing else "hidden",
+            )
+            data = html_page.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -201,6 +261,7 @@ def main() -> None:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 question = str(payload.get("question") or "").strip()
                 history = payload.get("history") if isinstance(payload.get("history"), list) else []
+                last_sources = payload.get("last_sources") if isinstance(payload.get("last_sources"), list) else []
                 routing_mode = str(payload.get("routing_mode") or "deterministic")
                 payload_out = answer_question_payload(
                     engine=engine,
@@ -211,6 +272,7 @@ def main() -> None:
                     k=args.k,
                     prompt_store=prompt_store,
                     routing_mode=routing_mode,
+                    previous_citations=last_sources,
                 )
                 self._send_json(payload_out)
             except Exception as exc:
@@ -255,6 +317,7 @@ def answer_question(
     party_id: str | None,
     k: int,
     routing_mode: str = "deterministic",
+    previous_citations: list[dict] | None = None,
 ) -> str:
     return answer_question_payload(
         engine=engine,
@@ -264,6 +327,7 @@ def answer_question(
         party_id=party_id,
         k=k,
         routing_mode=routing_mode,
+        previous_citations=previous_citations,
     )["answer"]
 
 
@@ -277,14 +341,17 @@ def answer_question_payload(
     k: int,
     prompt_store: dict[str, list[dict[str, str]]] | None = None,
     routing_mode: str = "deterministic",
-) -> dict[str, str]:
+    previous_citations: list[dict] | None = None,
+) -> dict[str, object]:
     if is_greeting(question):
-        return {"answer": "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexe."}
-    if is_source_followup(question):
-        sources = latest_sources_from_history(history)
-        if sources:
-            return {"answer": "Voici les sources utilisees dans ma reponse precedente :\n\n" + sources}
-        return {"answer": "Les sources detaillees sont disponibles dans la page `Voir le prompt LLM` de la reponse precedente."}
+        return {
+            "answer": "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé.",
+            "route": "greeting",
+            "sources": [],
+            "sources_markdown": "",
+            "retrieval_count": 0,
+            "prompt_citation_count": 0,
+        }
     response = engine.ask(
         ChatRequest(
             question=question,
@@ -293,9 +360,18 @@ def answer_question_payload(
             k=k,
             history=history,
             routing_mode=routing_mode,
+            previous_citations=previous_citations or [],
         )
     )
-    payload = {"answer": response.answer}
+    source_items = [citation_to_payload(citation) for citation in response.citations]
+    payload: dict[str, object] = {
+        "answer": response.answer,
+        "sources": source_items,
+        "sources_markdown": format_citations(response.citations) if response.citations else "",
+        "route": response.route,
+        "retrieval_count": response.retrieval_count,
+        "prompt_citation_count": response.prompt_citation_count,
+    }
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex
         prompt_store[prompt_id] = response.prompt_messages
@@ -309,21 +385,20 @@ def is_greeting(message: str) -> bool:
     return len(text) <= 40 and any(text == item or text.startswith(item + " ") or text.startswith(item + ",") for item in greetings)
 
 
-def is_source_followup(message: str) -> bool:
-    text = (message or "").strip().lower()
-    markers = ("sources", "exact sources", "passages cites", "preuves", "evidence")
-    return len(text) <= 90 and any(marker in text for marker in markers)
-
-
-def latest_sources_from_history(history: list[dict[str, str]]) -> str:
-    for item in reversed(history):
-        if item.get("role") != "assistant":
-            continue
-        content = item.get("content") or ""
-        marker = "\n\nSources\n"
-        if marker in content:
-            return content.split(marker, 1)[1].strip()
-    return ""
+def format_scope_banner(scope: dict[str, object], cutoff: date) -> str:
+    parties = []
+    for item in scope.get("parties") or []:
+        if isinstance(item, dict):
+            label = str(item.get("party_id") or item.get("name") or "").strip()
+            if label:
+                parties.append(label)
+    party_text = ", ".join(parties) if parties else "non renseigné"
+    doc_types = ", ".join(str(value) for value in scope.get("document_types") or []) or "non renseigné"
+    return (
+        f"Corpus actif : {scope.get('country_iso3') or 'non renseigné'} | "
+        f"partis={party_text} | documents={scope.get('n_documents', 0)} | "
+        f"types={doc_types} | as_of={cutoff.isoformat()} | mode=RAG evidence-grounded"
+    )
 
 
 def render_prompt_page(messages: list[dict[str, str]]) -> str:

@@ -19,11 +19,17 @@ question utilisateur
 
 ## Routes
 
-Trois routes sont actuellement autorisées :
+Sept routes sont actuellement autorisées :
 
 - `direct_lookup` : récupération directe d'un `segment_id` ;
 - `corpus_scope` : description déterministe du pays, du parti, de la date limite et du stockage actifs ;
 - `evidence_query` : question politique traitée par retrieval, génération et validation stricte.
+- `FOLLOW_UP_SOURCES` : restitution des preuves structurées de la réponse précédente ;
+- `OUT_OF_CORPUS` : demande exhaustive que le corpus documentaire actif ne peut établir ;
+- `COMPARISON_NEEDS_MORE_CORPUS` : comparaison explicite entre au moins deux partis ;
+- `ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA` : résultats, sièges, participation, vainqueur ou gouvernement.
+
+Les trois dernières routes ne produisent pas un refus sec. Elles décrivent ce que le corpus actif permet d'établir, puis indiquent les données manquantes. Le pays, les partis, les dates, les types de documents et leur nombre sont lus dans la `CountryMemory` active : aucune réponse de périmètre n'est écrite en dur pour une démonstration particulière.
 
 La politique de validation dépend de la route :
 
@@ -31,13 +37,17 @@ La politique de validation dépend de la route :
 direct_lookup → none
 corpus_scope  → none
 evidence_query → strict_evidence
+FOLLOW_UP_SOURCES → none
+OUT_OF_CORPUS → none
+COMPARISON_NEEDS_MORE_CORPUS → none
+ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA → none
 ```
 
 Une route inconnue est refusée.
 
 ## Routage déterministe ou LLM
 
-L'interface propose un contrôle `Routage` modifiable avant chaque question.
+Le routage déterministe est utilisé par défaut. Le contrôle permettant de passer au routage LLM est masqué pendant une démonstration normale ; il apparaît uniquement avec l'option `--debug-routing`.
 
 ### Déterministe
 
@@ -71,11 +81,17 @@ Chaque preuve contient son pays, son parti, sa date, son type de document, la ra
 
 ## Budget pour petit vLLM
 
-Le profil opérationnel limite le prompt à :
+Le profil opérationnel distingue trois quantités affichées sous chaque réponse :
+
+- `retrieval_count` : passages récupérés et classés ;
+- `prompt_citation_count` : preuves réellement transmises au LLM ;
+- sources affichées : exactement les preuves que le LLM a reçues, jamais les candidats supplémentaires.
+
+Le prompt est limité à :
 
 - 4 preuves ;
 - 1 bloc de contexte général ;
-- des extraits parent et enfant tronqués ;
+- des extraits de preuve configurables, à 420 caractères par défaut ;
 - 1 message d'historique compact ;
 - 350 tokens de sortie.
 
@@ -92,6 +108,10 @@ Pour `evidence_query`, `AnswerValidator` refuse une réponse qui :
 
 Une réponse d'insuffisance peut ne pas contenir de citation. En cas de rejet, le chat retourne les passages les plus pertinents sous forme extractive.
 
+La règle closed-world interdit également de transformer une absence de preuve en preuve d'absence. Si les extraits ne mentionnent qu'un acteur, le modèle peut constater cette limite mais ne peut pas conclure que cet acteur était le seul.
+
+Une vérification NLI phrase-preuve peut être activée avec `COMPASS_CHAT_SEMANTIC_VALIDATION_ENABLED=true`. Elle est désactivée par défaut, car un modèle NLI générique peut produire des faux négatifs sur des paraphrases politiques valides. En cas d'échec lorsqu'elle est activée, le système retourne le fallback extractif.
+
 ## Inspection du prompt
 
 Après une réponse LLM, `Voir le prompt LLM` ouvre un onglet d'inspection. Tous les clics réutilisent ce même onglet, ce qui évite d'accumuler des pages pendant une démonstration.
@@ -105,9 +125,13 @@ La page montre :
 
 ## Installation
 
+L'interface stable `apps/chat_web.py` utilise le serveur HTTP de la bibliothèque standard. Elle dépend des composants COMPASS installés par `requirements-full.txt` ou `requirements-onyxia.txt`, mais pas de Gradio.
+
 ```bash
-pip install -r requirements-chat.txt
+pip install -r requirements-full.txt
 ```
+
+Le fichier `requirements-chat.txt` n'est requis que pour le prototype optionnel `apps/chat_gradio.py`.
 
 Pour le profil complet Onyxia :
 
@@ -131,19 +155,23 @@ export COMPASS_HYDE_ENABLED=false
 export COMPASS_HF_DEVICE=cpu
 export COMPASS_RERANK_ENABLED=true
 export COMPASS_RERANK_POOL_SIZE=24
+export COMPASS_CHAT_MAX_PROMPT_CITATIONS=4
+export COMPASS_CHAT_MAX_EVIDENCE_TEXT_CHARS=420
+export COMPASS_CHAT_SEMANTIC_VALIDATION_ENABLED=false
+export COMPASS_CHAT_NLI_ENTAILMENT_THRESHOLD=0.65
 ```
 
 ## Lancement actuel
 
 ```bash
 python apps/chat_web.py \
-  --country DEU \
-  --as-of 2009-09-27 \
-  --party 41320 \
+  --country "$COUNTRY_ISO3" \
+  --as-of "$CUTOFF_DATE" \
+  --party "$PARTY_ID" \
   --port 41771
 ```
 
-`chat_web.py` est recommandé sur Onyxia. Le prototype `chat_gradio.py` reste disponible mais peut rencontrer des incompatibilités avec les versions FastAPI/Starlette du runtime vLLM.
+`chat_web.py` est recommandé sur Onyxia. Ajouter `--debug-routing` uniquement pour examiner ou comparer le routeur LLM. Le prototype `chat_gradio.py` reste disponible mais peut rencontrer des incompatibilités avec les versions FastAPI/Starlette du runtime vLLM.
 
 ## Questions de vérification
 

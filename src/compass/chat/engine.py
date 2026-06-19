@@ -18,9 +18,7 @@ from compass.config import settings
 from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
-_MAX_PROMPT_CITATIONS = 4
 _MAX_GENERAL_CONTEXT_ITEMS = 1
-_MAX_EVIDENCE_TEXT_CHARS = 180
 _MAX_PARENT_CONTEXT_CHARS = 90
 _MAX_GENERAL_CONTEXT_CHARS = 150
 _MAX_ANALYTICAL_CONTEXT_CHARS = 420
@@ -43,6 +41,10 @@ _ROUTE_VALIDATION_POLICIES = {
     "direct_lookup": "none",
     "corpus_scope": "none",
     "evidence_query": "strict_evidence",
+    "FOLLOW_UP_SOURCES": "none",
+    "OUT_OF_CORPUS": "none",
+    "COMPARISON_NEEDS_MORE_CORPUS": "none",
+    "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA": "none",
 }
 _ROUTING_MODES = {"deterministic", "llm"}
 
@@ -112,6 +114,7 @@ class ChatRequest:
     include_unverified: bool = False
     history: list[dict[str, str]] = field(default_factory=list)
     routing_mode: str = "deterministic"
+    previous_citations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,8 @@ class ChatResponse:
     retrieval_count: int
     general_context: list[GeneralContext] = field(default_factory=list)
     prompt_messages: list[dict[str, str]] = field(default_factory=list)
+    route: str = "evidence_query"
+    prompt_citation_count: int = 0
 
 
 class AnswerContractError(RuntimeError):
@@ -169,6 +174,7 @@ class ChatEngine:
         self.model_name = model_name or _default_chat_model()
 
     def _answer_segment_lookup(self, question: str, segment_ids: list[str]) -> ChatResponse:
+        metadata_warning = ""
         if hasattr(self.memory, "fetch_records_by_ids"):
             records = self.memory.fetch_records_by_ids(segment_ids)
         else:
@@ -177,6 +183,10 @@ class ChatEngine:
                 {"segment_id": segment_id, "text": text, "meta": {}}
                 for segment_id, text in texts.items()
             ]
+            metadata_warning = (
+                "\n\nAvertissement technique : les métadonnées sont absentes pour ce segment. "
+                "Vérifiez l'index ou réindexez le corpus."
+            )
         citations = build_citations(records)
         if not citations:
             return ChatResponse(
@@ -185,6 +195,7 @@ class ChatEngine:
                 model_used=None,
                 llm_used=False,
                 retrieval_count=0,
+                route="direct_lookup",
             )
         answer_lines = ["Voici le passage exact demande dans l'index COMPASS :", ""]
         for citation in citations:
@@ -193,24 +204,33 @@ class ChatEngine:
             answer_lines.append(citation.text)
             answer_lines.append("")
         return ChatResponse(
-            answer="\n".join(answer_lines).strip(),
+            answer="\n".join(answer_lines).strip() + metadata_warning,
             citations=citations,
             model_used=None,
             llm_used=False,
             retrieval_count=len(citations),
+            route="direct_lookup",
+            prompt_citation_count=len(citations),
         )
 
-    def _answer_corpus_scope(self, request: ChatRequest) -> ChatResponse:
+    def _answer_corpus_scope(self, request: ChatRequest, scope: dict[str, Any]) -> ChatResponse:
         """Describe the active corpus without retrieval or LLM generation."""
-        country = str(getattr(self.memory, "country", "unknown") or "unknown").upper()
-        party = request.party_id or "all indexed parties"
+        country = scope.get("country_iso3") or "non renseigné"
+        parties = _format_parties(scope.get("parties") or [])
+        dates = _format_document_dates(scope.get("document_dates") or [])
+        doc_types = ", ".join(scope.get("document_types") or []) or "non renseigné"
         answer = (
-            "Je suis connecte a la memoire documentaire COMPASS indexee pour cette session.\n\n"
+            "Je suis connecté à la mémoire documentaire COMPASS active pour cette session.\n\n"
             f"- Pays : {country}\n"
-            f"- Parti : {party}\n"
-            f"- Date limite des documents : {request.as_of.isoformat()}\n"
+            f"- Partis indexés : {parties}\n"
+            f"- Documents distincts : {scope.get('n_documents', 0)}\n"
+            f"- Types de documents : {doc_types}\n"
+            f"- Dates des documents : {dates}\n"
+            f"- Borne temporelle as_of : {request.as_of.isoformat()}\n"
             "- Stockage : index vectoriel ChromaDB local\n\n"
-            "Je reponds uniquement a partir des documents deja ingeres dans cet index; "
+            "La date as_of est une borne temporelle de requête. Elle n'est pas nécessairement "
+            "la date officielle du scrutin.\n\n"
+            "Je réponds uniquement à partir des documents déjà ingérés dans cet index ; "
             "je n'interroge pas Internet pendant la conversation."
         )
         return ChatResponse(
@@ -219,6 +239,52 @@ class ChatEngine:
             model_used=None,
             llm_used=False,
             retrieval_count=0,
+            route="corpus_scope",
+        )
+
+    def _answer_scope_limit(
+        self,
+        request: ChatRequest,
+        scope: dict[str, Any],
+        route: str,
+    ) -> ChatResponse:
+        country = scope.get("country_iso3") or "un pays non renseigné"
+        parties = _format_parties(scope.get("parties") or [])
+        n_documents = scope.get("n_documents", 0)
+        missing = {
+            "OUT_OF_CORPUS": "un corpus exhaustif couvrant tous les acteurs concernés",
+            "COMPARISON_NEEDS_MORE_CORPUS": "les manifestes des autres partis à comparer",
+            "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA": "une base structurée de résultats et de contexte électoral",
+        }[route]
+        answer = (
+            f"Le corpus actif contient {n_documents} document(s) distinct(s) pour {country}, "
+            f"parti(s) : {parties}. Il permet d'analyser les positions documentées dans ces textes, "
+            "mais pas de répondre de façon exhaustive à toute la question. "
+            f"Pour compléter l'analyse, il faudrait indexer {missing}."
+        )
+        return ChatResponse(
+            answer=answer,
+            citations=[],
+            model_used=None,
+            llm_used=False,
+            retrieval_count=0,
+            route=route,
+        )
+
+    def _answer_follow_up_sources(self, request: ChatRequest) -> ChatResponse:
+        citations = citations_from_payload(request.previous_citations)
+        if not citations:
+            answer = "Aucune source structurée n'est disponible pour la réponse précédente dans cette session."
+        else:
+            answer = "Voici les preuves utilisées dans la réponse précédente :\n\n" + format_citations(citations)
+        return ChatResponse(
+            answer=answer,
+            citations=citations,
+            model_used=None,
+            llm_used=False,
+            retrieval_count=0,
+            route="FOLLOW_UP_SOURCES",
+            prompt_citation_count=len(citations),
         )
 
     def ask(self, request: ChatRequest) -> ChatResponse:
@@ -226,16 +292,26 @@ class ChatEngine:
         question = request.question.strip()
         if not question:
             raise ValueError("Question vide.")
+        scope = describe_active_corpus(self.memory, request)
         route = route_chat_question(
             question,
             mode=request.routing_mode,
             model_name=self.model_name,
+            party_entities=_party_entity_labels(scope),
         )
         if route == "direct_lookup":
             segment_ids = extract_segment_ids(question)
             return self._answer_segment_lookup(question, segment_ids)
         if route == "corpus_scope":
-            return self._answer_corpus_scope(request)
+            return self._answer_corpus_scope(request, scope)
+        if route == "FOLLOW_UP_SOURCES":
+            return self._answer_follow_up_sources(request)
+        if route in {
+            "OUT_OF_CORPUS",
+            "COMPARISON_NEEDS_MORE_CORPUS",
+            "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA",
+        }:
+            return self._answer_scope_limit(request, scope, route)
         retrieved = query_evidence(
             self.memory,
             build_retrieval_query(question),
@@ -252,9 +328,11 @@ class ChatEngine:
                 model_used=None,
                 llm_used=False,
                 retrieval_count=0,
+                route="evidence_query",
             )
         retrieved = attach_parent_context(self.memory, retrieved)
-        citations = build_citations(retrieved)
+        all_citations = build_citations(retrieved)
+        citations = all_citations[:settings.chat_max_prompt_citations]
         general_context = retrieve_general_context(self.memory, question, request, retrieved)
         messages = build_messages(question, citations, request, general_context)
         try:
@@ -268,6 +346,8 @@ class ChatEngine:
                 raise RuntimeError("Empty LLM response")
             answer = strip_appended_sources(answer)
             validate_llm_answer(answer, citations, route=route)
+            if settings.chat_semantic_validation_enabled:
+                validate_semantic_grounding(answer, citations)
             return ChatResponse(
                 answer=answer,
                 citations=citations,
@@ -276,6 +356,8 @@ class ChatEngine:
                 retrieval_count=len(retrieved),
                 general_context=general_context,
                 prompt_messages=messages,
+                route=route,
+                prompt_citation_count=len(citations),
             )
         except Exception as exc:
             fallback = build_extractive_answer(question, citations, exc)
@@ -287,6 +369,8 @@ class ChatEngine:
                 retrieval_count=len(retrieved),
                 general_context=general_context,
                 prompt_messages=messages,
+                route=route,
+                prompt_citation_count=len(citations),
             )
 
 
@@ -339,6 +423,99 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
     return citations
 
 
+def citation_to_payload(citation: Citation) -> dict[str, Any]:
+    """Serialize a citation for browser/session state without parsing prose."""
+    return {
+        "ref_id": citation.ref_id,
+        "segment_id": citation.segment_id,
+        "text": citation.text,
+        "doc_id": citation.doc_id,
+        "country_iso3": citation.country_iso3,
+        "party_id": citation.party_id,
+        "doc_date": citation.doc_date,
+        "doc_type": citation.doc_type,
+        "reliability": citation.reliability,
+        "parent_text": citation.parent_text,
+        "retrieval_reason": citation.retrieval_reason,
+    }
+
+
+def citations_from_payload(items: list[dict[str, Any]]) -> list[Citation]:
+    citations: list[Citation] = []
+    for item in items:
+        try:
+            citations.append(Citation(
+                ref_id=str(item.get("ref_id") or f"S{len(citations) + 1}"),
+                segment_id=str(item.get("segment_id") or ""),
+                text=str(item.get("text") or ""),
+                doc_id=str(item.get("doc_id") or ""),
+                country_iso3=str(item.get("country_iso3") or ""),
+                party_id=_none_if_empty(item.get("party_id")),
+                doc_date=_none_if_empty(item.get("doc_date")),
+                doc_type=_none_if_empty(item.get("doc_type")),
+                reliability=_none_if_empty(item.get("reliability")),
+                parent_text=_none_if_empty(item.get("parent_text")),
+                retrieval_reason=_none_if_empty(item.get("retrieval_reason")),
+            ))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return citations
+
+
+def describe_active_corpus(memory: Any, request: ChatRequest) -> dict[str, Any]:
+    """Read the active corpus profile from memory, never from demo constants."""
+    scope: dict[str, Any] = {}
+    if hasattr(memory, "describe_corpus"):
+        try:
+            scope = memory.describe_corpus(as_of=request.as_of, party_id=request.party_id) or {}
+        except TypeError:
+            scope = memory.describe_corpus() or {}
+        except Exception:
+            scope = {}
+    return {
+        "country_iso3": str(
+            scope.get("country_iso3") or getattr(memory, "country", "") or ""
+        ).upper(),
+        "n_documents": int(scope.get("n_documents") or 0),
+        "parties": list(scope.get("parties") or []),
+        "document_dates": sorted({str(value) for value in scope.get("document_dates") or [] if value}),
+        "document_types": sorted({str(value) for value in scope.get("document_types") or [] if value}),
+    }
+
+
+def _party_entity_labels(scope: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for party in scope.get("parties") or []:
+        if isinstance(party, dict):
+            labels.extend(str(party.get(key) or "") for key in ("party_id", "name"))
+        else:
+            labels.append(str(party))
+    return [label for label in labels if label]
+
+
+def _format_parties(parties: list[Any]) -> str:
+    labels: list[str] = []
+    for party in parties:
+        if isinstance(party, dict):
+            party_id = str(party.get("party_id") or "").strip()
+            name = str(party.get("name") or "").strip()
+            if party_id and name:
+                labels.append(f"{party_id} ({name})")
+            elif party_id or name:
+                labels.append(party_id or name)
+        elif str(party).strip():
+            labels.append(str(party).strip())
+    return ", ".join(labels) if labels else "non renseigné dans les métadonnées"
+
+
+def _format_document_dates(document_dates: list[str]) -> str:
+    if not document_dates:
+        return "non renseignées"
+    if len(document_dates) == 1:
+        return document_dates[0]
+    return f"du {document_dates[0]} au {document_dates[-1]}"
+
+
 def build_general_context_items(records: list[dict[str, Any]], limit: int = 3) -> list[GeneralContext]:
     items: list[GeneralContext] = []
     seen: set[str] = set()
@@ -370,7 +547,7 @@ def build_messages(
     request: ChatRequest,
     general_context: list[GeneralContext] | None = None,
 ) -> list[dict[str, str]]:
-    prompt_citations = citations[:_MAX_PROMPT_CITATIONS]
+    prompt_citations = citations[:settings.chat_max_prompt_citations]
     evidence_context = "\n\n".join(
         f"[{citation.ref_id}] "
         f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
@@ -378,7 +555,7 @@ def build_messages(
         f"reliability={citation.reliability or 'unknown'}\n"
         f"retrieval_reason={citation.retrieval_reason or 'not available'}\n"
         f"local_parent_context={_compact_parent_context(citation)}\n"
-        f"{_excerpt(citation.text, max_chars=_MAX_EVIDENCE_TEXT_CHARS)}"
+        f"{_excerpt(citation.text, max_chars=settings.chat_max_evidence_text_chars)}"
         for citation in prompt_citations
     )
     general_context_text = format_general_context_for_prompt(general_context or [])
@@ -396,6 +573,9 @@ def build_messages(
         "Never cite [A], [C1], [C2], or any analytical/general-context label. "
         "If the cited evidence does not answer the question, say that the provided evidence is insufficient and explain what is missing. "
         "If a user premise is not supported by the cited evidence, correct it cautiously instead of accepting it. "
+        "Do not treat absence of evidence as evidence of absence. If the cited evidence mentions only one actor, "
+        "party, policy, country, or event, you may state that only this item appears in the provided evidence. "
+        "You must not conclude that no other items existed unless the evidence explicitly states the list is exhaustive. "
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
         "Do not infer motives, psychology, or hidden positions beyond the passages. "
         "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
@@ -570,20 +750,30 @@ def route_chat_question(
     question: str,
     mode: str = "deterministic",
     model_name: str | None = None,
+    party_entities: list[str] | None = None,
 ) -> str:
     """Route a question using the selected mode, with deterministic fallback."""
     normalized_mode = str(mode or "deterministic").strip().lower()
     if normalized_mode not in _ROUTING_MODES:
         raise ValueError(f"Unsupported routing mode: {mode}")
     if normalized_mode == "llm":
-        return _route_chat_question_llm(question, model_name or _default_chat_model())
-    return _route_chat_question_deterministic(question)
+        return _route_chat_question_llm(
+            question,
+            model_name or _default_chat_model(),
+            party_entities=party_entities,
+        )
+    return _route_chat_question_deterministic(question, party_entities=party_entities)
 
 
-def _route_chat_question_deterministic(question: str) -> str:
+def _route_chat_question_deterministic(
+    question: str,
+    party_entities: list[str] | None = None,
+) -> str:
     if extract_segment_ids(question):
         return "direct_lookup"
     normalized = _normalize_intent_text(question)
+    if _is_source_followup_intent(normalized):
+        return "FOLLOW_UP_SOURCES"
     corpus_patterns = (
         "quel corpus",
         "a quel corpus",
@@ -599,37 +789,112 @@ def _route_chat_question_deterministic(question: str) -> str:
     )
     if any(pattern in normalized for pattern in corpus_patterns):
         return "corpus_scope"
+    if _is_cross_party_comparison(question, normalized, party_entities or []):
+        return "COMPARISON_NEEDS_MORE_CORPUS"
+    election_context_patterns = (
+        "resultats electoraux", "resultat electoral", "qui a gagne",
+        "qui gouvernait", "nombre de sieges", "combien de sieges",
+        "electoral results", "who won", "who governed", "seat count", "turnout",
+    )
+    if any(pattern in normalized for pattern in election_context_patterns):
+        return "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA"
+    exhaustive_patterns = (
+        "tous les partis", "toutes les parties", "liste complete des",
+        "liste exhaustive", "all the parties", "all parties", "complete list of",
+    )
+    if any(pattern in normalized for pattern in exhaustive_patterns):
+        return "OUT_OF_CORPUS"
     return "evidence_query"
 
 
-def _route_chat_question_llm(question: str, model_name: str) -> str:
+def _route_chat_question_llm(
+    question: str,
+    model_name: str,
+    party_entities: list[str] | None = None,
+) -> str:
     """Ask the configured LLM for one route label; fail back deterministically."""
-    fallback = _route_chat_question_deterministic(question)
+    fallback = _route_chat_question_deterministic(question, party_entities=party_entities)
     messages = [
         {
             "role": "system",
             "content": (
                 "Classify the user request into exactly one COMPASS route. "
-                "Return only one label and no explanation: direct_lookup, corpus_scope, or evidence_query. "
+                "Return only one label and no explanation: direct_lookup, corpus_scope, evidence_query, "
+                "FOLLOW_UP_SOURCES, OUT_OF_CORPUS, COMPARISON_NEEDS_MORE_CORPUS, or "
+                "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA. "
                 "direct_lookup means the user requests an explicit segment id. "
                 "corpus_scope means the user asks which corpus, dataset, country, party, date scope, or storage is active. "
+                "FOLLOW_UP_SOURCES asks for sources used in the previous answer. "
+                "OUT_OF_CORPUS requests an exhaustive list not established by the active documentary corpus. "
+                "COMPARISON_NEEDS_MORE_CORPUS compares at least two named political parties; comparing two themes is evidence_query. "
+                "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA asks who governed, who won, turnout, seats, or election results. "
                 "evidence_query means the user asks about political content or evidence in indexed documents."
             ),
         },
         {"role": "user", "content": question},
     ]
     try:
-        decision = complete_chat(
+        raw_decision = complete_chat(
             model_name,
             messages,
             temperature=0.0,
             max_tokens=12,
-        ).strip().lower()
+        ).strip()
     except Exception:
         return fallback
+    decision = next(
+        (route for route in _ROUTE_VALIDATION_POLICIES if route.lower() == raw_decision.lower()),
+        raw_decision,
+    )
     if decision in _ROUTE_VALIDATION_POLICIES:
         return decision
     return fallback
+
+
+def _is_source_followup_intent(normalized: str) -> bool:
+    markers = (
+        "quelles sont tes sources", "quelles sont les sources", "sources exactes",
+        "passages cites", "preuves utilisees", "what are your sources",
+        "exact sources", "cited passages", "evidence used",
+    )
+    if len(normalized) > 120:
+        return False
+    if any(marker in normalized for marker in markers):
+        return True
+    asks_for_sources = "source" in normalized or "preuve" in normalized
+    followup_wording = any(word in normalized for word in ("quelles", "exact", "your answer", "ta reponse"))
+    return asks_for_sources and followup_wording
+
+
+def _is_cross_party_comparison(
+    question: str,
+    normalized: str,
+    party_entities: list[str],
+) -> bool:
+    comparison_markers = ("compare", "comparer", "comparaison", "versus", " vs ")
+    if not any(marker in f" {normalized} " for marker in comparison_markers):
+        return False
+    relative_markers = (
+        "par rapport aux autres partis", "avec les autres partis",
+        "compared with other parties", "versus other parties",
+    )
+    if any(marker in normalized for marker in relative_markers):
+        return True
+
+    found: set[str] = set()
+    for entity in party_entities:
+        normalized_entity = _normalize_intent_text(entity)
+        if normalized_entity and normalized_entity in normalized:
+            found.add(normalized_entity)
+    for acronym in re.findall(r"\b[A-Z][A-Z0-9.-]{1,11}\b", question):
+        found.add(acronym.lower())
+    for explicit in re.findall(
+        r"\b(?:parti|party)\s+([A-Za-z0-9][A-Za-z0-9_.-]{1,30})",
+        question,
+        flags=re.IGNORECASE,
+    ):
+        found.add(explicit.lower())
+    return len(found) >= 2
 
 
 def _normalize_intent_text(text: str) -> str:
@@ -695,7 +960,7 @@ def validate_llm_answer(
     if forbidden:
         raise AnswerContractError("answer cited analytical/general context")
 
-    valid_source_ids = {citation.ref_id for citation in citations[:_MAX_PROMPT_CITATIONS]}
+    valid_source_ids = {citation.ref_id for citation in citations[:settings.chat_max_prompt_citations]}
     source_refs = [ref for ref in refs if ref.startswith("S")]
     unknown = sorted({ref for ref in source_refs if ref not in valid_source_ids})
     if unknown:
@@ -708,6 +973,46 @@ def validate_llm_answer(
 def _is_insufficiency_answer(answer: str) -> bool:
     lowered = answer.lower()
     return any(marker in lowered for marker in _INSUFFICIENT_MARKERS)
+
+
+def validate_semantic_grounding(answer: str, citations: list[Citation]) -> None:
+    """Optionally verify cited claim sentences with the shared NLI model.
+
+    This guard is deliberately opt-in: generic multilingual NLI can reject
+    valid analytical paraphrases. When enabled, a failed implication raises
+    ``AnswerContractError`` and the normal extractive fallback takes over.
+    """
+    from compass.nlp_models import nli_pipeline
+
+    by_ref = {citation.ref_id: citation for citation in citations}
+    classifier = nli_pipeline()
+    claim_sentences = re.split(r"(?<=[.!?])\s+|\n+", answer.strip())
+    checked = 0
+    for sentence in claim_sentences:
+        refs = [ref for ref in _ANSWER_REF_RE.findall(sentence) if ref.startswith("S")]
+        if not refs:
+            continue
+        claim = _ANSWER_REF_RE.sub("", sentence).strip()
+        if not claim:
+            continue
+        checked += 1
+        supported = False
+        for ref in refs:
+            citation = by_ref.get(ref)
+            if citation is None:
+                continue
+            result = classifier({"text": citation.text, "text_pair": claim})
+            if isinstance(result, list):
+                result = result[0] if result else {}
+            label = str((result or {}).get("label") or "").lower()
+            score = float((result or {}).get("score") or 0.0)
+            if "entail" in label and score >= settings.chat_nli_entailment_threshold:
+                supported = True
+                break
+        if not supported:
+            raise AnswerContractError("semantic grounding check failed")
+    if not checked and not _is_insufficiency_answer(answer):
+        raise AnswerContractError("semantic grounding found no cited claim")
 
 
 def validation_policy_for_route(route: str) -> str:

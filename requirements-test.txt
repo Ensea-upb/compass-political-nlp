@@ -5,3 +5,4 @@
 pandas>=2.1
 pytesseract>=0.3.10
 Pillow>=10.0
+ruff>=0.5

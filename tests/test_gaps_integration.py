@@ -204,6 +204,33 @@ class TestGap1_HierarchicalChunking:
         assert metadatas[0]["segment_level"] == "parent"
         assert metadatas[1]["segment_level"] == "child"
 
+    def test_country_memory_describes_the_indexed_corpus(self):
+        from tests.conftest import CHROMA_COL
+
+        memory = _country_memory()
+        memory._conn.execute(
+            "INSERT INTO parties (party_id, country_iso3, name) VALUES (?,?,?)",
+            ("pd_sen", "SEN", "Parti test"),
+        )
+        memory._conn.commit()
+        CHROMA_COL.get.reset_mock()
+        CHROMA_COL.get.return_value = {
+            "ids": ["doc:p000", "doc:p000c000", "doc2:p000c000"],
+            "metadatas": [
+                {"doc_id": "doc", "country_iso3": "SEN", "party_id": "pd_sen", "doc_date": "2024-01-01", "doc_type": "manifesto"},
+                {"doc_id": "doc", "country_iso3": "SEN", "party_id": "pd_sen", "doc_date": "2024-01-01", "doc_type": "manifesto"},
+                {"doc_id": "doc2", "country_iso3": "SEN", "party_id": "pd_sen", "doc_date": "2024-02-01", "doc_type": "speech"},
+            ],
+        }
+
+        scope = memory.describe_corpus(as_of=date(2024, 3, 24), party_id="pd_sen")
+
+        assert scope["country_iso3"] == "SEN"
+        assert scope["n_documents"] == 2
+        assert scope["parties"] == [{"party_id": "pd_sen", "name": "Parti test"}]
+        assert scope["document_dates"] == ["2024-01-01", "2024-02-01"]
+        assert scope["document_types"] == ["manifesto", "speech"]
+
     def test_query_documents_targets_children_then_falls_back_for_old_indexes(self):
         from tests.conftest import CHROMA_COL
 

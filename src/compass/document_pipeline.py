@@ -14,7 +14,9 @@ le 2026-06-11, justification et alternatives dans CHOIX_COMPOSANTS.md) :
                          contrôle temporel des sources web (C08/C15).
     - Détection langue : lingua-language-detector — plus précis que langdetect sur
                          les langues africaines (décision déjà actée, Partie 3 §4.1).
-    - Segmentation     : spaCy (sentencizer multilingue) — logique quasi-phrases CMP.
+    - Segmentation     : règles déterministes (paragraphes, ponctuation et listes)
+                         avec regroupement sémantique parent-enfant — logique
+                         quasi-phrases CMP, sans dépendance à un modèle spaCy.
 
 CUSTOM (justifié) : uniquement l'orchestration et le contrat de métadonnées
 (DocumentMeta) — aucun outil existant n'impose pays/parti/date/élection/source,

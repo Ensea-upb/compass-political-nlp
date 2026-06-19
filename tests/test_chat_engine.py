@@ -16,11 +16,23 @@ from compass.chat.engine import (
     route_chat_question,
     strip_appended_sources,
     validate_llm_answer,
+    validate_semantic_grounding,
     validation_policy_for_route,
 )
 
 
 class FakeMemory:
+    country = "TST"
+
+    def describe_corpus(self, as_of=None, party_id=None):
+        return {
+            "country_iso3": "TST",
+            "n_documents": 1,
+            "parties": [{"party_id": party_id or "P100", "name": "Test Party"}],
+            "document_dates": ["2009-09-01"],
+            "document_types": ["manifesto_api_text"],
+        }
+
     def query_documents(self, question, as_of, k=12, party_id=None, include_unverified=False):
         return [
             {
@@ -28,8 +40,8 @@ class FakeMemory:
                 "text": "The party supports democratic accountability and transparent elections.",
                 "meta": {
                     "doc_id": "doc1",
-                    "country_iso3": "DEU",
-                    "party_id": party_id or "41320",
+                    "country_iso3": "TST",
+                    "party_id": party_id or "P100",
                     "doc_date": "2009-09-01",
                     "doc_type": "manifesto_api_text",
                     "reliability": "official",
@@ -87,6 +99,25 @@ def test_chat_engine_uses_llm_and_returns_citations(monkeypatch):
     assert response.citations[0].ref_id == "S1"
     assert "[S1]" in response.answer
     assert response.prompt_messages
+
+
+def test_chat_engine_distinguishes_retrieval_and_prompt_evidence_budgets(monkeypatch):
+    class ManyResultsMemory(FakeMemory):
+        def query_documents(self, question, as_of, k=12, party_id=None, include_unverified=False):
+            base = super().query_documents(question, as_of, k, party_id, include_unverified)[0]
+            return [
+                {**base, "segment_id": f"doc1:p{index:03d}c000", "text": f"Proof {index}."}
+                for index in range(8)
+            ]
+
+    monkeypatch.setattr(chat_engine, "complete_chat", lambda *args, **kwargs: "Supported answer [S4].")
+    response = ChatEngine(ManyResultsMemory(), model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27))
+    )
+
+    assert response.retrieval_count == 8
+    assert response.prompt_citation_count == 4
+    assert len(response.citations) == 4
 
 
 def test_chat_engine_prefers_hybrid_retrieval(monkeypatch):
@@ -158,7 +189,6 @@ def test_chat_engine_falls_back_when_llm_answers_without_citation(monkeypatch):
 
 def test_chat_engine_routes_corpus_scope_without_retrieval_or_llm(monkeypatch):
     memory = FakeMemory()
-    memory.country = "DEU"
 
     def fail_retrieval(*args, **kwargs):
         raise AssertionError("retrieval must not run for corpus scope")
@@ -172,14 +202,17 @@ def test_chat_engine_routes_corpus_scope_without_retrieval_or_llm(monkeypatch):
         ChatRequest(
             question="tu es connecte a quel corpus ?",
             as_of=date(2009, 9, 27),
-            party_id="41320",
+            party_id="P100",
         )
     )
 
     assert response.llm_used is False
     assert response.retrieval_count == 0
-    assert "DEU" in response.answer
-    assert "41320" in response.answer
+    assert "TST" in response.answer
+    assert "P100" in response.answer
+    assert "Test Party" in response.answer
+    assert "Documents distincts : 1" in response.answer
+    assert "n'est pas nécessairement" in response.answer
     assert "2009-09-27" in response.answer
     assert "ChromaDB" in response.answer
 
@@ -188,6 +221,16 @@ def test_chat_question_router_distinguishes_scope_lookup_and_evidence():
     assert route_chat_question("tu es connecte a quel corpus ?") == "corpus_scope"
     assert route_chat_question("je veux doc1:p303c001") == "direct_lookup"
     assert route_chat_question("Que dit le parti sur la democratie ?") == "evidence_query"
+
+
+def test_scope_routes_are_intentional_and_comparison_is_party_aware():
+    entities = ["P100", "P200", "Alpha Party", "Beta Party"]
+
+    assert route_chat_question("quels étaient tous les partis en 2009 ?") == "OUT_OF_CORPUS"
+    assert route_chat_question("compare P100 et P200", party_entities=entities) == "COMPARISON_NEEDS_MORE_CORPUS"
+    assert route_chat_question("compare la position du parti sur X et Y", party_entities=entities) == "evidence_query"
+    assert route_chat_question("qui gouvernait ?") == "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA"
+    assert route_chat_question("quelles sont les sources exactes ?") == "FOLLOW_UP_SOURCES"
 
 
 def test_llm_router_uses_only_allowed_route_labels(monkeypatch):
@@ -228,6 +271,10 @@ def test_answer_validation_policy_depends_on_route():
     assert validation_policy_for_route("direct_lookup") == "none"
     assert validation_policy_for_route("corpus_scope") == "none"
     assert validation_policy_for_route("evidence_query") == "strict_evidence"
+    assert validation_policy_for_route("OUT_OF_CORPUS") == "none"
+    assert validation_policy_for_route("COMPARISON_NEEDS_MORE_CORPUS") == "none"
+    assert validation_policy_for_route("ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA") == "none"
+    assert validation_policy_for_route("FOLLOW_UP_SOURCES") == "none"
     validate_llm_answer("Session corpus description without citation.", [], route="corpus_scope")
 
 
@@ -235,9 +282,9 @@ def test_build_citations_and_format_sources():
     citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
     formatted = format_citations(citations)
 
-    assert citations[0].country_iso3 == "DEU"
+    assert citations[0].country_iso3 == "TST"
     assert "doc1:p000c000" in formatted
-    assert "party=41320" in formatted
+    assert "party=P100" in formatted
     assert "excerpt:" in formatted
 
 
@@ -286,6 +333,8 @@ def test_chat_prompt_requires_evidence_linked_claims():
     assert "Do not use outside knowledge" in system
     assert "Never cite [A]" in system
     assert "provided evidence is insufficient" in system
+    assert "absence of evidence as evidence of absence" in system
+    assert "list is exhaustive" in system
     assert "ANALYTICAL_CONTEXT - conceptual reading frame" in messages[-1]["content"]
     assert "GENERAL_CONTEXT - background only" in messages[-1]["content"]
     assert "CITED_EVIDENCE - the only claim-supporting evidence" in messages[-1]["content"]
@@ -302,6 +351,16 @@ def test_validate_llm_answer_allows_insufficiency_without_citation():
     citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
 
     validate_llm_answer("The provided evidence is insufficient to answer this question.", citations)
+
+
+def test_optional_semantic_grounding_accepts_entailment(monkeypatch):
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+    monkeypatch.setattr(
+        "compass.nlp_models.nli_pipeline",
+        lambda: lambda pair: {"label": "entailment", "score": 0.99},
+    )
+
+    validate_semantic_grounding("The party supports democratic accountability [S1].", citations)
 
 
 def test_compact_history_trims_sources_and_long_answers():
@@ -349,6 +408,61 @@ def test_chat_engine_fetches_exact_segment_id_with_metadata():
     assert response.citations[0].segment_id == "doc1:p303c001"
     assert response.citations[0].country_iso3 == "DEU"
     assert "party=41320" in response.answer
+
+
+def test_direct_lookup_fallback_warns_when_metadata_are_unavailable():
+    class LegacyMemory:
+        country = "TST"
+
+        def describe_corpus(self, **kwargs):
+            return {"country_iso3": "TST", "n_documents": 1}
+
+        def fetch_by_ids(self, segment_ids):
+            return {segment_ids[0]: "Exact legacy passage."}
+
+    response = ChatEngine(LegacyMemory()).ask(
+        ChatRequest(question="Show me exact passage doc1:p303c001", as_of=date(2009, 9, 27))
+    )
+
+    assert "Exact legacy passage" in response.answer
+    assert "métadonnées sont absentes" in response.answer
+    assert "UNK" in response.answer
+
+
+def test_scope_limit_is_consultative_and_runtime_derived():
+    response = ChatEngine(FakeMemory()).ask(
+        ChatRequest(question="quels étaient tous les partis en 2009 ?", as_of=date(2009, 9, 27))
+    )
+
+    assert response.route == "OUT_OF_CORPUS"
+    assert "TST" in response.answer
+    assert "P100" in response.answer
+    assert "façon exhaustive" in response.answer
+    assert "DEU" not in response.answer
+
+
+def test_follow_up_sources_uses_structured_previous_citations():
+    previous = [{
+        "ref_id": "S1",
+        "segment_id": "doc1:p000c000",
+        "text": "Stored proof.",
+        "doc_id": "doc1",
+        "country_iso3": "TST",
+        "party_id": "P100",
+        "doc_date": "2009-09-01",
+        "doc_type": "manifesto",
+        "reliability": "official",
+    }]
+
+    response = ChatEngine(FakeMemory()).ask(ChatRequest(
+        question="quelles sont les sources exactes ?",
+        as_of=date(2009, 9, 27),
+        previous_citations=previous,
+    ))
+
+    assert response.route == "FOLLOW_UP_SOURCES"
+    assert "Stored proof" in response.answer
+    assert response.citations[0].segment_id == "doc1:p000c000"
 
 
 def test_economic_retrieval_query_adds_priority_terms():
@@ -496,7 +610,9 @@ def test_chat_prompt_is_bounded_for_small_vllm_contexts():
     )
 
     prompt = "\n".join(message["content"] for message in messages)
-    assert len(prompt) < 5000
+    # About 1.5k tokens: bounded well below the 4k vLLM demo context while
+    # preserving more of each passage than the previous 180-character limit.
+    assert len(prompt) < 7000
     assert "[S4]" in prompt
     assert "[S5]" not in prompt
     assert "[C1]" in prompt

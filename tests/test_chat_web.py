@@ -3,19 +3,26 @@ from datetime import date
 from apps.chat_web import (
     answer_question,
     answer_question_payload,
+    format_scope_banner,
     is_greeting,
-    is_source_followup,
-    latest_sources_from_history,
     render_prompt_page,
 )
+from compass.chat.engine import Citation
 
 
 class DummyEngine:
     def ask(self, request):
         class Response:
             answer = "Evidence-based answer [S1]."
-            citations = []
+            citations = [Citation(
+                ref_id="S1", segment_id="doc:p001c001", text="Proof text.",
+                doc_id="doc", country_iso3="TST", party_id="P100",
+                doc_date="2020-01-01", doc_type="manifesto", reliability="official",
+            )]
             prompt_messages = [{"role": "user", "content": "prompt"}]
+            route = "evidence_query"
+            retrieval_count = 8
+            prompt_citation_count = 1
         return Response()
 
 
@@ -68,6 +75,11 @@ def test_chat_web_payload_adds_prompt_link():
     assert payload["prompt_url"].startswith("./prompt/")
     assert store
     assert "\n\nSources\n" not in payload["answer"]
+    assert payload["route"] == "evidence_query"
+    assert payload["retrieval_count"] == 8
+    assert payload["prompt_citation_count"] == 1
+    assert payload["sources"][0]["segment_id"] == "doc:p001c001"
+    assert "Proof text" in payload["sources_markdown"]
 
 
 def test_chat_web_forwards_selected_routing_mode():
@@ -76,7 +88,11 @@ def test_chat_web_forwards_selected_routing_mode():
             assert request.routing_mode == "llm"
             return type("Response", (), {
                 "answer": "Routed answer.",
+                "citations": [],
                 "prompt_messages": [],
+                "route": "evidence_query",
+                "retrieval_count": 0,
+                "prompt_citation_count": 0,
             })()
 
     payload = answer_question_payload(
@@ -92,30 +108,23 @@ def test_chat_web_forwards_selected_routing_mode():
     assert payload["answer"] == "Routed answer."
 
 
-def test_chat_web_reuses_last_sources_for_followup():
-    history = [
-        {"role": "user", "content": "What about democracy?"},
-        {"role": "assistant", "content": "Answer [S1].\n\nSources\n- [S1] source detail"},
-    ]
+def test_chat_web_forwards_structured_previous_sources():
+    class FollowUpEngine:
+        def ask(self, request):
+            assert request.previous_citations[0]["segment_id"] == "doc:p001c001"
+            return type("Response", (), {
+                "answer": "Stored proof.", "citations": [], "prompt_messages": [],
+                "route": "FOLLOW_UP_SOURCES", "retrieval_count": 0,
+                "prompt_citation_count": 0,
+            })()
 
-    answer = answer_question(
-        engine=DummyEngine(),
-        question="What are the exact sources for your answer?",
-        history=history,
-        cutoff=date(2009, 9, 27),
-        party_id="41320",
-        k=8,
+    payload = answer_question_payload(
+        engine=FollowUpEngine(), question="What are your exact sources?", history=[],
+        cutoff=date(2009, 9, 27), party_id=None, k=8,
+        previous_citations=[{"segment_id": "doc:p001c001"}],
     )
 
-    assert "source detail" in answer
-    assert "Evidence-based answer" not in answer
-
-
-def test_chat_web_source_followup_helpers():
-    assert is_source_followup("What are the exact sources?") is True
-    assert latest_sources_from_history([
-        {"role": "assistant", "content": "A\n\nSources\n- [S1] detail"}
-    ]) == "- [S1] detail"
+    assert payload["route"] == "FOLLOW_UP_SOURCES"
 
 
 def test_chat_web_prompt_page_is_human_readable():
@@ -143,3 +152,21 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert 'name="routing_mode"' in HTML
     assert 'value="deterministic" checked' in HTML
     assert 'value="llm"' in HTML
+    assert "__ROUTING_CLASS__" in HTML
+    assert "last_sources" in HTML
+    assert "sources_markdown" in HTML
+    assert "data-question" in HTML
+
+
+def test_scope_banner_is_runtime_derived():
+    banner = format_scope_banner({
+        "country_iso3": "TST",
+        "n_documents": 3,
+        "parties": [{"party_id": "P100", "name": "Test Party"}],
+        "document_types": ["manifesto"],
+    }, date(2020, 1, 2))
+
+    assert "TST" in banner
+    assert "P100" in banner
+    assert "documents=3" in banner
+    assert "as_of=2020-01-02" in banner

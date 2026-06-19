@@ -11,8 +11,9 @@ CUSTOM (justifié) : rien — ce composant est une configuration de ChromaDB
 (théories, typologies, codebook V-Party) est versé via C01.
 
 PRINCIPE D'ARCHITECTURE : cette mémoire ne contient AUCUN fait daté propre à un
-pays — c'est le mécanisme de portabilité (elle ne change pas quand on passe de
-la Côte d'Ivoire au Sénégal). Les faits pays vont dans C03.
+pays. Comme ``DocumentMeta.country_iso3`` est obligatoire, les connaissances
+portables utilisent la portée technique ``GEN`` (ou ``GLOBAL``), jamais un code
+pays réel. Les faits pays vont dans C03.
 """
 
 from __future__ import annotations
@@ -47,9 +48,10 @@ class GeneralMemory:
             ValueError: si un segment porte un pays — interdit dans cette mémoire.
         """
         for seg in segments:
-            if seg.meta.party_id is not None:
+            general_scope = str(seg.meta.country_iso3 or "").upper() in {"GEN", "GLOBAL"}
+            if not general_scope or seg.meta.party_id is not None:
                 raise ValueError(
-                    f"Segment {seg.segment_id} lié à un parti : il relève de la "
+                    f"Segment {seg.segment_id} lié à un pays ou un parti : il relève de la "
                     "mémoire pays (C03), pas de la mémoire générale."
                 )
         self._col.upsert(

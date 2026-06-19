@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 import statistics
 
+import numpy as np
+
 from compass.schemas import AggregatedJudgment, JudgeAnswer
 
 logger = logging.getLogger(__name__)
