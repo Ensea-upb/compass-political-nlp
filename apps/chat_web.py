@@ -48,6 +48,13 @@ HTML = """<!doctype html>
     button:disabled { opacity: 0.55; cursor: wait; }
     code { color: #d7e0ff; }
     a { color: #8db3ff; }
+    .routing { display: flex; align-items: center; gap: 8px; color: #b7bbc2; font-size: 14px; }
+    .routing label { cursor: pointer; }
+    .routing input { position: absolute; opacity: 0; pointer-events: none; }
+    .routing span { display: inline-flex; min-height: 32px; align-items: center; padding: 0 10px; border: 1px solid #3a3f47; background: #17191d; color: #d5d8de; }
+    .routing label:first-of-type span { border-radius: 6px 0 0 6px; }
+    .routing label:last-of-type span { border-left: 0; border-radius: 0 6px 6px 0; }
+    .routing input:checked + span { background: #2d5596; border-color: #568bf0; color: #ffffff; }
   </style>
 </head>
 <body>
@@ -56,6 +63,17 @@ HTML = """<!doctype html>
       <h1>COMPASS Chat</h1>
       <div class="scope">__SCOPE__</div>
     </header>
+    <div class="routing" role="group" aria-label="Mode de routage">
+      <strong>Routage</strong>
+      <label>
+        <input type="radio" name="routing_mode" value="deterministic" checked>
+        <span>Deterministe</span>
+      </label>
+      <label>
+        <input type="radio" name="routing_mode" value="llm">
+        <span>LLM</span>
+      </label>
+    </div>
     <section id="chat" aria-live="polite">
       <div class="msg assistant">Bonjour. Pose une question sur le corpus indexe, par exemple: What does the party say about democracy?</div>
     </section>
@@ -109,7 +127,11 @@ HTML = """<!doctype html>
         const response = await fetch('./ask', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({question: text, history})
+          body: JSON.stringify({
+            question: text,
+            history,
+            routing_mode: document.querySelector('input[name="routing_mode"]:checked').value
+          })
         });
         const raw = await response.text();
         let payload;
@@ -179,6 +201,7 @@ def main() -> None:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 question = str(payload.get("question") or "").strip()
                 history = payload.get("history") if isinstance(payload.get("history"), list) else []
+                routing_mode = str(payload.get("routing_mode") or "deterministic")
                 payload_out = answer_question_payload(
                     engine=engine,
                     question=question,
@@ -187,6 +210,7 @@ def main() -> None:
                     party_id=args.party,
                     k=args.k,
                     prompt_store=prompt_store,
+                    routing_mode=routing_mode,
                 )
                 self._send_json(payload_out)
             except Exception as exc:
@@ -230,6 +254,7 @@ def answer_question(
     cutoff: date,
     party_id: str | None,
     k: int,
+    routing_mode: str = "deterministic",
 ) -> str:
     return answer_question_payload(
         engine=engine,
@@ -238,6 +263,7 @@ def answer_question(
         cutoff=cutoff,
         party_id=party_id,
         k=k,
+        routing_mode=routing_mode,
     )["answer"]
 
 
@@ -250,6 +276,7 @@ def answer_question_payload(
     party_id: str | None,
     k: int,
     prompt_store: dict[str, list[dict[str, str]]] | None = None,
+    routing_mode: str = "deterministic",
 ) -> dict[str, str]:
     if is_greeting(question):
         return {"answer": "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexe."}
@@ -265,6 +292,7 @@ def answer_question_payload(
             party_id=party_id,
             k=k,
             history=history,
+            routing_mode=routing_mode,
         )
     )
     payload = {"answer": response.answer}

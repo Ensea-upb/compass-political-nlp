@@ -44,6 +44,7 @@ _ROUTE_VALIDATION_POLICIES = {
     "corpus_scope": "none",
     "evidence_query": "strict_evidence",
 }
+_ROUTING_MODES = {"deterministic", "llm"}
 
 _ANALYTICAL_LENSES = {
     "democracy": {
@@ -110,6 +111,7 @@ class ChatRequest:
     k: int = 8
     include_unverified: bool = False
     history: list[dict[str, str]] = field(default_factory=list)
+    routing_mode: str = "deterministic"
 
 
 @dataclass(frozen=True)
@@ -224,7 +226,11 @@ class ChatEngine:
         question = request.question.strip()
         if not question:
             raise ValueError("Question vide.")
-        route = route_chat_question(question)
+        route = route_chat_question(
+            question,
+            mode=request.routing_mode,
+            model_name=self.model_name,
+        )
         if route == "direct_lookup":
             segment_ids = extract_segment_ids(question)
             return self._answer_segment_lookup(question, segment_ids)
@@ -560,8 +566,21 @@ def extract_segment_ids(text: str) -> list[str]:
     return ids
 
 
-def route_chat_question(question: str) -> str:
-    """Route a question before retrieval and answer validation."""
+def route_chat_question(
+    question: str,
+    mode: str = "deterministic",
+    model_name: str | None = None,
+) -> str:
+    """Route a question using the selected mode, with deterministic fallback."""
+    normalized_mode = str(mode or "deterministic").strip().lower()
+    if normalized_mode not in _ROUTING_MODES:
+        raise ValueError(f"Unsupported routing mode: {mode}")
+    if normalized_mode == "llm":
+        return _route_chat_question_llm(question, model_name or _default_chat_model())
+    return _route_chat_question_deterministic(question)
+
+
+def _route_chat_question_deterministic(question: str) -> str:
     if extract_segment_ids(question):
         return "direct_lookup"
     normalized = _normalize_intent_text(question)
@@ -581,6 +600,36 @@ def route_chat_question(question: str) -> str:
     if any(pattern in normalized for pattern in corpus_patterns):
         return "corpus_scope"
     return "evidence_query"
+
+
+def _route_chat_question_llm(question: str, model_name: str) -> str:
+    """Ask the configured LLM for one route label; fail back deterministically."""
+    fallback = _route_chat_question_deterministic(question)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Classify the user request into exactly one COMPASS route. "
+                "Return only one label and no explanation: direct_lookup, corpus_scope, or evidence_query. "
+                "direct_lookup means the user requests an explicit segment id. "
+                "corpus_scope means the user asks which corpus, dataset, country, party, date scope, or storage is active. "
+                "evidence_query means the user asks about political content or evidence in indexed documents."
+            ),
+        },
+        {"role": "user", "content": question},
+    ]
+    try:
+        decision = complete_chat(
+            model_name,
+            messages,
+            temperature=0.0,
+            max_tokens=12,
+        ).strip().lower()
+    except Exception:
+        return fallback
+    if decision in _ROUTE_VALIDATION_POLICIES:
+        return decision
+    return fallback
 
 
 def _normalize_intent_text(text: str) -> str:

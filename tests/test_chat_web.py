@@ -70,6 +70,28 @@ def test_chat_web_payload_adds_prompt_link():
     assert "\n\nSources\n" not in payload["answer"]
 
 
+def test_chat_web_forwards_selected_routing_mode():
+    class RoutingEngine:
+        def ask(self, request):
+            assert request.routing_mode == "llm"
+            return type("Response", (), {
+                "answer": "Routed answer.",
+                "prompt_messages": [],
+            })()
+
+    payload = answer_question_payload(
+        engine=RoutingEngine(),
+        question="What does the party say?",
+        history=[],
+        cutoff=date(2009, 9, 27),
+        party_id="41320",
+        k=8,
+        routing_mode="llm",
+    )
+
+    assert payload["answer"] == "Routed answer."
+
+
 def test_chat_web_reuses_last_sources_for_followup():
     history = [
         {"role": "user", "content": "What about democracy?"},
@@ -118,3 +140,6 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "Voir le prompt LLM" in HTML
     assert "compass_prompt_viewer" in HTML
     assert "window.open(promptUrl, 'compass_prompt_viewer')" in HTML
+    assert 'name="routing_mode"' in HTML
+    assert 'value="deterministic" checked' in HTML
+    assert 'value="llm"' in HTML

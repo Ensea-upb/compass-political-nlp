@@ -190,6 +190,40 @@ def test_chat_question_router_distinguishes_scope_lookup_and_evidence():
     assert route_chat_question("Que dit le parti sur la democratie ?") == "evidence_query"
 
 
+def test_llm_router_uses_only_allowed_route_labels(monkeypatch):
+    monkeypatch.setattr(chat_engine, "complete_chat", lambda *args, **kwargs: "corpus_scope")
+
+    route = route_chat_question(
+        "Peux-tu me dire quelles donnees sont actives ?",
+        mode="llm",
+        model_name="local-test-model",
+    )
+
+    assert route == "corpus_scope"
+
+
+def test_llm_router_falls_back_to_deterministic_on_invalid_output(monkeypatch):
+    monkeypatch.setattr(
+        chat_engine,
+        "complete_chat",
+        lambda *args, **kwargs: "I think this is probably about metadata.",
+    )
+
+    route = route_chat_question(
+        "tu es connecte a quel corpus ?",
+        mode="llm",
+        model_name="local-test-model",
+    )
+
+    assert route == "corpus_scope"
+
+
+def test_chat_request_defaults_to_deterministic_routing():
+    request = ChatRequest(question="q", as_of=date(2009, 9, 27))
+
+    assert request.routing_mode == "deterministic"
+
+
 def test_answer_validation_policy_depends_on_route():
     assert validation_policy_for_route("direct_lookup") == "none"
     assert validation_policy_for_route("corpus_scope") == "none"

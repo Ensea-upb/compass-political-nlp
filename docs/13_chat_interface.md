@@ -29,6 +29,13 @@ Before retrieval, the chat routes each request:
 
 This prevents metadata questions from retrieving unrelated manifesto fragments or being rejected for missing `[Sx]` citations.
 
+The web interface exposes two routing modes that can be switched before any question:
+
+- `Deterministe` (default): uses explicit segment-id and corpus-scope rules, then falls back to `evidence_query`;
+- `LLM`: sends a short classification request to the configured local model, which must return exactly one allowed route label.
+
+The LLM router cannot create new routes. Its output is accepted only when it exactly matches `direct_lookup`, `corpus_scope`, or `evidence_query`. If the routing call fails, times out, or returns an invalid value, COMPASS automatically uses the deterministic router. Changing the UI control affects the next request immediately and does not require restarting the service.
+
 `AnswerValidator` uses an explicit policy attached to the selected route:
 
 - `direct_lookup` -> `none` because the response is deterministic;
