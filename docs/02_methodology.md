@@ -1,7 +1,53 @@
-# Methodology
+# Méthodologie
 
-The methodology separates evidence from interpretation.
+## Principe central
 
-Raw documents are first ingested with metadata. Passages are then matched to a political taxonomy. Reasoning operates on the retrieved evidence, not on an unbounded prompt. Validation checks whether the final profile includes a source document, detected themes, and evidence for each theme.
+COMPASS distingue systématiquement la preuve, le contexte et l'interprétation. Le contexte aide à comprendre un passage, mais seules les unités identifiées comme preuves peuvent soutenir les affirmations finales.
 
-The public demo uses deterministic keyword retrieval so it can run anywhere. The research version can replace this layer with embeddings, reranking, NLI, or LLM-assisted coding while preserving the same interface.
+## Étapes
+
+### 1. Ingestion
+
+Chaque document reçoit des métadonnées : pays, parti, élection, date, langue, type de source, fiabilité et origine. La date utilisée pour le raisonnement historique doit être vérifiée.
+
+### 2. Chunking hiérarchique
+
+Le pipeline produit :
+
+- des parents, blocs thématiques conservant le contexte local ;
+- des enfants, unités plus courtes destinées au retrieval et aux citations.
+
+Les fragments trop courts sont fusionnés et les fragments trop longs sont divisés. Une baisse de cohésion lexicale peut ouvrir un nouveau parent.
+
+### 3. Retrieval
+
+La recherche combine :
+
+```text
+recherche dense ChromaDB
++ BM25 lexical
++ signaux légers liés à la question
+→ pool de candidats
+→ contexte parent
+→ reranking cross-encoder
+```
+
+### 4. Construction du prompt
+
+Le prompt distingue :
+
+- `ANALYTICAL_CONTEXT` : cadre conceptuel non citable ;
+- `GENERAL_CONTEXT` : contexte documentaire non citable ;
+- `CITED_EVIDENCE` : seules preuves autorisées, référencées par `[Sx]`.
+
+### 5. Génération et validation
+
+Le LLM produit une réponse courte et sourcée. `AnswerValidator` applique une politique dépendante de la route : validation stricte pour une question politique, aucune exigence `[Sx]` pour une réponse déterministe de périmètre ou un lookup direct.
+
+### 6. Dégradation contrôlée
+
+Si vLLM est indisponible, si le prompt est refusé ou si la réponse enfreint le contrat de citation, le chat retourne une réponse extractive construite à partir des passages récupérés.
+
+## Limites
+
+Le retrieval pertinent ne garantit pas à lui seul une interprétation correcte. Les résultats doivent être évalués sur un corpus annoté et relus humainement.

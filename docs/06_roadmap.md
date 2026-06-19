@@ -1,39 +1,43 @@
-# Roadmap
+# Feuille de route
 
-## Implemented in the public pipeline
+## Fonctionnalités implémentées
 
-- Parent-child + semantic chunking is implemented and tested: retrieval targets bounded child citation units, while paragraph-level parent blocks are retained for contextual reranking.
-- Hybrid retrieval is implemented and tested as the default path: dense Chroma order is fused with BM25, parent context is injected, then a cross-encoder reranks the candidate pool before final citation selection.
-- COMPASS Chat exposes an inspectable prompt page after each LLM answer, so demos can show exactly what was sent to the local vLLM server.
-- Optional HyDE retrieval is implemented with graceful fallback when the local/API LLM is unavailable.
-- Manifesto Project ingestion is connected to the official API workflow, with text fallback when original PDFs are blocked.
-- Onyxia local vLLM and COMPASS Chat are documented and validated on the small open-weight profile.
+- ingestion de textes, URL et PDF avec OCR de repli ;
+- métadonnées temporelles et filtrage historique ;
+- chunking parent/enfant avec séparation sémantique légère ;
+- mémoire structurée SQLite et mémoire documentaire ChromaDB ;
+- retrieval dense + BM25, contexte parent et reranking cross-encoder ;
+- ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF original est bloqué ;
+- serveur vLLM local open-weight sur Onyxia ;
+- chat avec citations `[Sx]`, contexte analytique, inspection du prompt et fallback extractif ;
+- routage déterministe ou LLM sélectionnable depuis l'interface ;
+- politique `AnswerValidator` dépendante de la route ;
+- tests unitaires, tests d'intégration et smoke test de l'architecture réelle.
 
-## Deferred workstream: global Manifesto corpus and contamination-safe chat
+## Chantier différé : corpus Manifesto mondial et chat sans contamination
 
-This workstream is recorded for later implementation. No global-corpus code is implemented yet.
+Ce chantier est documenté pour une reprise ultérieure. Il n'est pas encore implémenté.
 
-- Build one ingestion manifest covering all available Manifesto Project countries, parties, and elections instead of generating one country-specific CSV at a time.
-- Keep the existing `compass_country_<iso3>` Chroma collections and add a lightweight corpus-level facade that discovers and queries them; avoid a costly migration to a new monolithic collection.
-- Make Manifesto document identifiers deterministic so rerunning ingestion updates existing segments instead of creating UUID-based duplicates.
-- Persist `election_id` in Chroma metadata and preserve a canonical manifesto identity across original text and translated variants.
-- Allow COMPASS Chat to launch without mandatory `--country`, `--party`, or `--as-of` arguments; no country filter should mean all indexed country collections are available.
-- Add a scope resolver after question routing and before retrieval. It must resolve explicit country, party, election, date, language, and comparison scopes.
-- Apply scope priority in this order: entities explicitly stated in the current question, filters explicitly selected in the UI, then global corpus scope. Conversation history must not silently change documentary filters.
-- Fail closed on ambiguous party or election references by asking for clarification instead of selecting a country or party arbitrarily.
-- Prevent corpus contamination: cited child evidence, parent context, and general context must remain attached to the same collection, document, party, election, and language variant.
-- Treat global exploration and explicit comparison separately. Comparative retrieval must create one evidence compartment per requested country/party and require evidence for every compared side.
-- Make `AnswerValidator` scope-aware so each political claim is supported by citations from the correct scope; reject cross-country, cross-party, cross-election, and original/translation leakage.
-- Add integration tests for global questions, single-country questions, ambiguous scopes, cross-country comparisons, direct segment lookup, and contamination rejection.
-- Update the Onyxia runbook only after a complete global ingestion and chat validation run has passed.
+1. Produire un manifeste d'ingestion couvrant tous les pays, partis et élections disponibles dans le Manifesto Project.
+2. Conserver les collections `compass_country_<iso3>` et ajouter une façade légère capable de les découvrir et de les interroger ensemble.
+3. Rendre les identifiants de documents déterministes afin qu'une réingestion mette à jour les segments existants au lieu de créer des doublons UUID.
+4. Persister `election_id` dans Chroma et conserver une identité canonique entre texte original et traduction.
+5. Permettre le lancement du chat sans `--country`, `--party` ou `--as-of` obligatoires.
+6. Ajouter un résolveur de périmètre après le routage et avant le retrieval : pays, parti, élection, date, langue et comparaison.
+7. Appliquer l'ordre de priorité suivant : périmètre écrit dans la question, filtres choisis dans l'interface, puis corpus global.
+8. Demander une clarification lorsqu'un parti ou une élection est ambigu, au lieu de choisir arbitrairement.
+9. Empêcher la contamination : preuve enfant, parent et contexte général doivent rester liés au même document, pays, parti, élection et variante linguistique.
+10. Compartimenter les comparaisons et exiger des preuves pour chaque entité comparée.
+11. Rendre `AnswerValidator` sensible au périmètre de chaque affirmation.
+12. Valider le dispositif sur Onyxia avant de mettre à jour le guide opérationnel mondial.
 
-## Next research validation steps
+## Prochaines validations de recherche
 
-- Reindex the pilot Manifesto corpus with semantic chunking and validate source readability in the chat.
-- Validate parent/child block sizes and reranking pool size on pilot Manifesto documents; tune `COMPASS_PARENT_CHUNK_SIZE`, `COMPASS_CHILD_CHUNK_MIN_CHARS`, `COMPASS_CHILD_CHUNK_MAX_CHARS`, `COMPASS_SEMANTIC_CHUNK_SIMILARITY_THRESHOLD`, and `COMPASS_RERANK_POOL_SIZE`.
-- Validate the political knowledge graph on annotated actor-relation examples.
-- Add multilingual preprocessing and language-aware segmentation.
-- Expand the taxonomy from the compact demo to the full research coding scheme.
-- Add uncertainty, contradiction, and source-reliability reporting to final pilot reports.
-- Provide more synthetic examples for cross-country and election-year scenarios.
-- Package the framework for reproducible research workflows.
+- réindexer le corpus pilote avec les paramètres actuels de chunking ;
+- annoter un jeu de requêtes et passages pour mesurer rappel, précision et qualité du reranking ;
+- calibrer la taille des parents, des enfants et du pool de reranking ;
+- évaluer le graphe politique sur des relations annotées ;
+- renforcer le traitement multilingue et la segmentation sensible à la langue ;
+- étendre le registre de variables ;
+- mesurer l'incertitude, les contradictions et la fiabilité des sources ;
+- documenter un protocole reproductible de comparaison entre pays et élections.

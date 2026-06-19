@@ -2,28 +2,43 @@
 
 ![tests](https://github.com/Ensea-upb/compass-political-nlp/actions/workflows/tests.yml/badge.svg)
 
-Research-oriented NLP framework for extracting, structuring, and validating political positions from party manifestos and heterogeneous political documents.
+COMPASS est un cadre de recherche pour ingérer des documents politiques, retrouver des passages pertinents et produire des analyses traçables. Le dépôt public contient le code réutilisable, des exemples synthétiques, les tests et la documentation d'exécution. Il ne contient ni documents privés, ni articles téléchargés, ni fichiers de supervision interne.
 
-COMPASS combines computational social science, multilingual NLP, document engineering, and political economy. The public repository is a clean showcase version: reusable code, concise documentation, synthetic examples, tests, and no private PDFs, articles, slides, supervision notes, or internal work files.
+## Objectif
 
-## Why COMPASS?
+COMPASS vise à relier chaque conclusion politique aux documents qui la soutiennent. Le système distingue explicitement :
 
-Political documents are often multilingual, heterogeneous, and unevenly digitized. Many approaches work best on clean manifesto text, which can bias analysis against parties or countries with weaker documentation infrastructures.
+- le document brut et ses métadonnées ;
+- les segments citables et leur contexte parent ;
+- le contexte analytique utilisé pour interpréter une question ;
+- les preuves autorisées à soutenir une affirmation ;
+- la génération LLM et la validation de sa réponse.
 
-COMPASS is designed as an auditable pipeline that moves from raw political evidence to traceable party profiles and, eventually, comparative political-space analysis.
+Le pipeline de recherche suit cette chaîne :
 
-## Public Demo
+```text
+documents politiques
+→ ingestion et datation
+→ chunking parent/enfant
+→ indexation vectorielle et lexicale
+→ retrieval hybride
+→ reranking par cross-encoder
+→ génération contrôlée
+→ validation et traçabilité
+```
+
+## Démarrage rapide
+
+La démo légère fonctionne sans clé API et sans modèle volumineux :
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-demo.txt
 python examples/run_demo.py
-pip install -r requirements-test.txt
-python -m pytest
 ```
 
-Expected output:
+Résultat attendu :
 
 ```text
 Document loaded: sample_manifesto.txt
@@ -32,101 +47,76 @@ Generated party profile: examples/sample_party_profile.json
 Validation status: passed
 ```
 
-For a run aligned with the real architecture, start with:
+Pour vérifier les contrats de l'architecture réelle sans télécharger les modèles :
 
 ```powershell
+pip install -r requirements-test.txt
 python examples/run_real_architecture.py smoke
+python -m pytest
 ```
 
-Then, on an environment with the full dependencies and model-download access:
+## Exécution complète et Onyxia
+
+Deux profils sont prévus :
 
 ```powershell
-# Generic full runtime:
+# environnement local complet
 pip install -r requirements-full.txt
-# Onyxia GPU/vLLM runtime, use instead of requirements-full:
+
+# environnement Onyxia avec vLLM
 pip install -r requirements-onyxia.txt
-python examples/run_real_architecture.py full --reset
 ```
 
-See `docs/09_onyxia_runbook.md` for the Onyxia step-by-step guide.
-See `docs/11_onyxia_hf_models.md` for local Hugging Face model serving with vLLM. The default runtime profile is `onyxia-16gb` (`Qwen/Qwen2.5-3B-Instruct`); larger 14B/32B judge profiles are documented as research extensions.
-See `docs/12_manifesto_pdf_ingestion.md` for automatic Manifesto Project PDF retrieval and ingestion.
-See `docs/13_chat_interface.md` for the optional COMPASS Chat interface over indexed corpora.
+Guides associés :
 
-## Research Pipeline
+- [exécution pas à pas sur Onyxia](docs/09_onyxia_runbook.md) ;
+- [modèles Hugging Face et serveur vLLM](docs/11_onyxia_hf_models.md) ;
+- [ingestion du Manifesto Project](docs/12_manifesto_pdf_ingestion.md) ;
+- [interface COMPASS Chat](docs/13_chat_interface.md).
 
-```text
-Raw political documents
--> ingestion
--> preprocessing
--> taxonomy annotation
--> retrieval / reasoning
--> validation
--> final political analysis
-```
+## Deux niveaux de démonstration
 
-<p align="center">
-  <img src="assets/compass_pipeline.png" width="760" alt="COMPASS political NLP pipeline">
-</p>
+`compass.demo` constitue une démonstration déterministe et synthétique. Elle sert à vérifier rapidement l'installation.
 
-## Repository Structure
+Les modules de `src/compass/` constituent l'architecture de recherche : ingestion PDF/OCR, mémoire ChromaDB, retrieval hybride, raisonnement, juges, agrégation, validation et garde-fous. La démo légère ne remplace pas cette architecture.
+
+## Organisation du dépôt
 
 ```text
 compass-political-nlp/
-|-- README.md
-|-- LICENSE
-|-- .gitignore
-|-- requirements-demo.txt
-|-- requirements-test.txt
-|-- requirements-full.txt
-|-- pyproject.toml
-|-- docs/
-|-- scripts/
-|-- src/
-|   `-- compass/
-|-- examples/
-|-- notebooks/
-|-- tests/
-`-- assets/
+├── apps/          interfaces de conversation
+├── assets/        schémas et illustrations
+├── docs/          documentation scientifique et opérationnelle
+├── examples/      démonstrations et données synthétiques
+├── registry/      fiches de variables politiques
+├── scripts/       préparation des corpus et modèles
+├── src/compass/   composants du système
+└── tests/         tests unitaires et d'intégration
 ```
 
-## Source Code Philosophy
+## État actuel
 
-The `src/compass` package is extracted from the original `compass_system` research code, with public names replacing the internal `c01`, `c02`, ... component labels:
+Le dépôt implémente notamment :
 
-- `document_pipeline.py` keeps the C01 ingestion logic;
-- `general_memory.py`, `political_graph.py`, and `country_memory.py` keep the C02/C02b/C03 memory split;
-- `internal_retrieval.py` supports registry-guided retrieval with optional HyDE and parent-child context enrichment;
-- `vparty_registry.py`, `diagnostic_engine.py`, `reasoning_engine.py`, `judge_panel.py`, `aggregation.py`, `final_output.py`, `validation.py`, and `guardrails.py` preserve the downstream architecture;
-- `schemas.py` remains the interface contract between components.
+- le chunking hiérarchique parent/enfant avec séparation sémantique légère ;
+- l'indexation par pays dans ChromaDB ;
+- le retrieval dense + BM25 et le reranking cross-encoder ;
+- l'ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF est bloqué ;
+- un chat RAG avec citations `[Sx]`, page d'inspection du prompt, routage sélectionnable et validation dépendante de la route ;
+- un profil Onyxia validé avec un modèle local open-weight de 3 milliards de paramètres.
 
-The deterministic demo is intentionally isolated in `compass.demo`. It is a zero-credential quickstart, not a replacement for the research pipeline.
+Le corpus Manifesto mondial et le chat multi-pays sans contamination sont inscrits comme chantier différé dans la [roadmap](docs/06_roadmap.md). Ils ne sont pas encore implémentés.
 
-## Current Scope
+## Politique de données
 
-The public version currently includes:
+Les données téléchargées et les index sont placés sous `data/`, ignoré par Git. Les clés `MANIFESTO_API_KEY` et `HF_TOKEN` doivent rester dans les variables d'environnement. Aucun secret ne doit être ajouté au dépôt.
 
-- renamed research modules extracted from `compass_system`;
-- the V-Party registry YAML examples;
-- parent-child chunking, optional HyDE retrieval, and a political knowledge graph component;
-- architecture and component-choice documentation;
-- a deterministic synthetic demo pipeline for quick verification;
-- tests for the public demo.
+## Avertissement scientifique
 
-The full research pipeline depends on OCR, PDF parsing, embeddings, reranking, NLI, LLM-assisted coding, and human validation. The quick demo avoids those heavy dependencies so the repository can still be checked immediately.
+COMPASS est un projet académique. Une réponse générée, un score ou un profil politique doit être contrôlé humainement et validé avant toute interprétation substantielle.
 
-## Data Policy
-
-This repository does not include copyrighted manifestos, restricted datasets, confidential research notes, private supervision material, downloaded articles, or internal Claude work files.
-
-Public examples are synthetic.
-
-## Disclaimer
-
-COMPASS is an academic research project. Political scores or profiles produced by the pipeline require human review, robustness checks, and external validation before substantive interpretation.
-
-## Author
+## Auteur
 
 Inza Ouada Soro  
 ENSAE Paris  
-Research internship project in NLP, political economy, and computational social science.
+Projet de stage en NLP, économie politique et sciences sociales computationnelles.

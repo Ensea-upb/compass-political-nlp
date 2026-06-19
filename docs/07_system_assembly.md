@@ -11,21 +11,21 @@
 | Pièce | Fichier | Brique état de l'art principale | Custom résiduel |
 |---|---|---|---|
 | Colonne vertébrale | `config.py`, `schemas.py` | pydantic / pydantic-settings | contrats d'interface |
-| C01 Pipeline documentaire | `c01_pipeline_documentaire.py` | PyMuPDF, pytesseract, trafilatura, lingua, spaCy | contrat de métadonnées |
-| C02 Mémoire générale | `c02_memoire_generale.py` | ChromaDB + sentence-transformers | interdiction des faits pays |
-| C03 Mémoire pays | `c03_memoire_pays.py` | SQLite + pandas + ChromaDB (filtre `$lte`) | schéma SQL, règle d'historisation |
-| C04 Dossier parti-élection | `c04_dossier_parti_election.py` | orchestration de C02/C03 | logique métier (assumé) |
-| C05 Registre V-Party | `c05_registre_vparty.py` | pydantic + YAML ; contenu = codebook officiel | gate d'adhérence R-1 |
-| C06 Retrieval interne | `c06_retrieval_interne.py` | rank-bm25 + cross-encoder multilingue | requête dictée par la fiche |
-| C07 Test de suffisance | `c07_test_suffisance.py` | scikit-learn (LogReg calibrée) | traits métier, seuil calibré R-2 |
-| C08 Recherche active | `c08_recherche_active.py` | ddgs/Tavily + trafilatura (via C01) | budget, fiabilité des domaines |
-| C09 Diagnostic | `c09_moteur_diagnostic.py` | NLI multilingue (mDeBERTa XNLI) | structure du rapport |
-| C10 Raisonnement adaptable | `c10_moteur_raisonnement.py` | litellm + endpoint local vLLM + transformers + pandas | routeur par régime de preuve |
-| C11 Juges multiples | `c11_juges_multiples.py` | modèles Hugging Face open-weight via vLLM | orchestration du panel |
-| C12 Agrégation | `c12_agregation.py` | numpy/scipy + krippendorff | décomposition de l'incertitude |
-| C13 Sortie finale | `c13_sortie_finale.py` | pydantic + NLI (réutilisé) — cadre AIS | mise en forme |
-| C14 Validation | `c14_validation.py` | scikit-learn, scipy ; étalon V-Party importé | ECE (formule standard), strates |
-| C15 Garde-fous | `c15_garde_fous.py` | structlog, hashlib, litellm | 3 protocoles propres au projet |
+| C01 Pipeline documentaire | `document_pipeline.py` | PyMuPDF, pytesseract, trafilatura, lingua, spaCy | contrat de métadonnées |
+| C02 Mémoire générale | `general_memory.py` | ChromaDB + sentence-transformers | interdiction des faits pays |
+| C03 Mémoire pays | `country_memory.py` | SQLite + pandas + ChromaDB (filtre `$lte`) | schéma SQL, règle d'historisation |
+| C04 Dossier parti-élection | `party_election_case.py` | orchestration de C02/C03 | logique métier (assumé) |
+| C05 Registre V-Party | `vparty_registry.py` | pydantic + YAML ; contenu = codebook officiel | gate d'adhérence R-1 |
+| C06 Retrieval interne | `internal_retrieval.py` | rank-bm25 + cross-encoder multilingue | requête dictée par la fiche |
+| C07 Test de suffisance | `sufficiency_gate.py` | scikit-learn (LogReg calibrée) | traits métier, seuil calibré R-2 |
+| C08 Recherche active | `active_search.py` | ddgs/Tavily + trafilatura (via C01) | budget, fiabilité des domaines |
+| C09 Diagnostic | `diagnostic_engine.py` | NLI multilingue (mDeBERTa XNLI) | structure du rapport |
+| C10 Raisonnement adaptable | `reasoning_engine.py` | litellm + endpoint local vLLM + transformers + pandas | routeur par régime de preuve |
+| C11 Juges multiples | `judge_panel.py` | modèles Hugging Face open-weight via vLLM | orchestration du panel |
+| C12 Agrégation | `aggregation.py` | numpy/scipy + krippendorff | décomposition de l'incertitude |
+| C13 Sortie finale | `final_output.py` | pydantic + NLI (réutilisé) — cadre AIS | mise en forme |
+| C14 Validation | `validation.py` | scikit-learn, scipy ; étalon V-Party importé | ECE (formule standard), strates |
+| C15 Garde-fous | `guardrails.py` | structlog, hashlib, litellm | 3 protocoles propres au projet |
 
 Dépendances entre pièces (qui s'emboîte sur quoi) :
 

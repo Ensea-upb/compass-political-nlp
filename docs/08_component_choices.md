@@ -68,9 +68,9 @@ Sources : [AfroBench](https://arxiv.org/html/2311.07978), [état des LLM langues
 | Fichier | Changement |
 |---|---|
 | `config.py` | `embedding_model` → bge-m3 ; ajout `reranker_model` (bge-reranker-v2-m3) et `political_classifier` (Political DEBATE, anglais) |
-| `c01_pipeline_documentaire.py` | htmldate dans `ingest_url` (datation réelle + marquage `_undated`) ; option Surya documentée |
-| `c06_retrieval_interne.py` | reranker lu depuis la config (bge-reranker-v2-m3) |
-| `c08_recherche_active.py` | `_safe_date` rétrogradée en valeur d'amorçage — la datation fait foi en C01 |
+| `document_pipeline.py` | htmldate dans `ingest_url` (datation réelle + marquage `_undated`) ; option Surya documentée |
+| `internal_retrieval.py` | reranker lu depuis la config (bge-reranker-v2-m3) |
+| `active_search.py` | `_safe_date` rétrogradée en valeur d'amorçage — la datation fait foi dans le pipeline documentaire |
 | `requirements-full.txt` | + htmldate ; + surya-ocr (optionnel) |
 
 **Règle pour la suite** : tout nouveau composant ou remplacement passe par ce fichier — recherche web datée, alternatives, critère multilingue/rhétorique explicite. Les choix de modèles se périment vite ; la procédure, non.

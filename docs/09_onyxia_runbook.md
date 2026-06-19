@@ -1,91 +1,132 @@
-# Onyxia Runbook
+# Guide d'exécution sur Onyxia
 
-This runbook validates the public repository against the real COMPASS architecture.
+Ce guide décrit l'installation validée du dépôt public, depuis le clone jusqu'au chat connecté à un serveur vLLM local.
 
-## 1. Clone
+## 1. Préparer le service
+
+Utiliser un service VS Code GPU avec :
+
+- un GPU NVIDIA ;
+- un volume persistant activé ;
+- suffisamment de RAM pour les embeddings et le reranking CPU ;
+- les ports `8000` pour vLLM et `41771` pour le chat si l'interface Onyxia exige leur exposition.
+
+Le profil validé utilise un GPU de 16 Go et `Qwen/Qwen2.5-3B-Instruct`.
+
+## 2. Cloner et créer l'environnement
 
 ```bash
+cd ~/work
 git clone https://github.com/Ensea-upb/compass-political-nlp.git
 cd compass-political-nlp
-```
 
-## 2. Create Environment
-
-```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements-demo.txt
-```
-
-The smoke test uses the lightweight demo dependencies only.
-
-## 3. Smoke Test
-
-```bash
+pip install -r requirements-onyxia.txt
 pip install -r requirements-test.txt
+```
+
+Si le dépôt existe déjà :
+
+```bash
+cd ~/work/compass-political-nlp
+git pull
+source .venv/bin/activate
+```
+
+## 3. Vérifier le dépôt sans modèle
+
+```bash
+python examples/run_demo.py
 python examples/run_real_architecture.py smoke
+python -m pytest
 ```
 
-This checks the real schemas, registry, temporal guardrail and aggregation without downloading large models.
+Le smoke test vérifie les schémas, le registre, le garde-fou temporel, le diagnostic typé et l'agrégation sans exiger ChromaDB ou vLLM en fonctionnement.
 
-Expected ending:
-
-```text
-Smoke status: passed
-```
-
-## 4. Full Architecture Test
-
-Install the complete research stack before the full architecture run:
+## 4. Vérifier le GPU
 
 ```bash
-pip install -r requirements-full.txt
+nvidia-smi
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 ```
 
-The full run downloads NLP models on first execution. On Onyxia, prefer a service with enough memory for `sentence-transformers`, `transformers` and `torch`.
-For local open-weight LLM serving, see `docs/11_onyxia_hf_models.md`.
+## 5. Lancer vLLM
+
+Dans un premier terminal :
 
 ```bash
-python examples/run_real_architecture.py full --reset
+source .venv/bin/activate
+python -m vllm.entrypoints.openai.api_server \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.80
 ```
 
-This seeds a synthetic country-party-election case, creates local SQLite and Chroma stores under `data/onyxia_real_architecture`, ingests synthetic text via C01, loads the V-Party registry, and calls the real `CompassRunner` on `v2pavote`.
-
-Expected ending:
-
-```text
-Full status: completed
-v2pavote: score=42.5, ...
-```
-
-## 5. Local vLLM and Chat
-
-For the validated Onyxia local-LLM path:
-
-1. Start vLLM with the T4-safe profile in `docs/11_onyxia_hf_models.md`.
-2. Verify `curl http://localhost:8000/v1/models`.
-3. Export the `COMPASS_LLM_*` variables shown in the same guide.
-4. Launch the chat interface with `docs/13_chat_interface.md`.
-
-On Tesla T4, keep the vLLM flags:
+Vérifier le serveur :
 
 ```bash
-export VLLM_USE_FLASHINFER_SAMPLER=0
-# vLLM server flag: --attention-backend TRITON_ATTN
+curl http://localhost:8000/v1/models
 ```
 
-This avoids the FlashInfer startup failure:
+Le nom retourné doit être utilisé dans `COMPASS_JUDGE_MODELS` et `COMPASS_HYDE_MODEL`.
 
-```text
-BatchPrefillWithPagedKVCache failed with error invalid argument
+## 6. Configurer COMPASS
+
+Dans un second terminal :
+
+```bash
+cd ~/work/compass-political-nlp
+source .venv/bin/activate
+
+export COMPASS_LLM_BACKEND=local
+export COMPASS_LLM_API_BASE=http://localhost:8000/v1
+export COMPASS_LLM_API_KEY=EMPTY
+export COMPASS_JUDGE_MODELS=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HYDE_MODEL=Qwen/Qwen2.5-3B-Instruct
+export COMPASS_HYDE_ENABLED=false
+export COMPASS_HF_DEVICE=cpu
 ```
 
-## 6. If Something Fails
+Le GPU est réservé à vLLM. Les embeddings et le cross-encoder restent sur CPU pour éviter une concurrence VRAM.
 
-- Missing Python package in smoke/test mode: rerun `pip install -r requirements-test.txt`.
-- Missing Python package in full mode: rerun `pip install -r requirements-full.txt`.
-- Model download blocked: allow outbound internet or pre-populate the Hugging Face cache in the Onyxia service.
-- Memory error: restart with more RAM.
-- Tesseract error: the synthetic full example does not need OCR, so Tesseract is only required for PDF scans.
-- Gradio JSON parse error: use `python apps/chat_web.py` instead of `apps/chat_gradio.py`.
+## 7. Configurer les données persistantes
+
+```bash
+export COMPASS_DATA_DIR=$PWD/data/manifesto_ingestion
+export COMPASS_CHROMA_DIR=$PWD/data/manifesto_ingestion/chroma
+export COMPASS_SQLITE_PATH=$PWD/data/manifesto_ingestion/compass_structured.db
+export COMPASS_TRACE_DIR=$PWD/data/manifesto_ingestion/traces
+```
+
+Ces chemins doivent pointer vers la même campagne d'ingestion.
+
+## 8. Lancer le chat
+
+Le chat actuel exige encore un pays et une date limite :
+
+```bash
+python apps/chat_web.py \
+  --country DEU \
+  --as-of 2009-09-27 \
+  --party 41320 \
+  --port 41771
+```
+
+Ouvrir ensuite le port `41771` depuis l'interface Onyxia. Le chantier de chat mondial sans pays obligatoire est différé dans la roadmap.
+
+## 9. Diagnostic rapide
+
+```bash
+curl http://localhost:8000/v1/models
+git log -1 --oneline
+python -m pytest tests/test_chat_engine.py tests/test_chat_web.py -q
+```
+
+- `ModuleNotFoundError: vllm` : installer `requirements-onyxia.txt` dans l'environnement actif.
+- `CUDA out of memory` : utiliser le modèle 3B, réduire `gpu-memory-utilization` ou arrêter les autres processus GPU.
+- `400 Bad Request` : vérifier `max-model-len`, le nom du modèle et que le dépôt contient le budget de prompt compact.
+- fallback extractif : consulter la note technique et les logs du terminal vLLM.

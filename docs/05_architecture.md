@@ -1,41 +1,45 @@
-# Architecture
+# Architecture du système
+
+## Démo légère
 
 ```text
 examples/sample_manifesto.txt
-        |
-        v
-src/compass/demo.py
-        |
-        v
-examples/sample_party_profile.json
+→ src/compass/demo.py
+→ examples/sample_party_profile.json
 ```
 
-The public quickstart uses the deterministic demo module.
+Cette démo déterministe sert uniquement à vérifier l'installation.
 
-The real research architecture is exposed through the renamed modules:
+## Pipeline de recherche
 
 ```text
-src/compass/document_pipeline.py
-src/compass/general_memory.py
-src/compass/political_graph.py
-src/compass/country_memory.py
-src/compass/vparty_registry.py
-src/compass/internal_retrieval.py
-src/compass/diagnostic_engine.py
-src/compass/reasoning_engine.py
-src/compass/judge_panel.py
-src/compass/aggregation.py
-src/compass/final_output.py
-src/compass/validation.py
-src/compass/guardrails.py
-src/compass/orchestrator.py
+document brut
+→ document_pipeline.py
+→ general_memory.py / country_memory.py / political_graph.py
+→ party_election_case.py
+→ internal_retrieval.py
+→ sufficiency_gate.py ↔ active_search.py
+→ diagnostic_engine.py
+→ reasoning_engine.py / judge_panel.py
+→ aggregation.py
+→ final_output.py
+→ validation.py / guardrails.py
 ```
 
-This separation keeps the public demo lightweight while preserving the real research pipeline.
+`config.py` centralise les paramètres et `schemas.py` définit les contrats échangés entre les composants.
 
-Recent integration work adds three research-oriented improvements:
+## Mémoire documentaire
 
-- parent-child + semantic chunking in `document_pipeline.py` and `country_memory.py`: parent blocks preserve paragraph-level context, semantic topic shifts can start new parents, while child segments are citation units built from sentence/list fragments; very short fragments are merged and oversized fragments are split before indexing;
-- hybrid retrieval in `country_memory.py`, `chat/engine.py`, and `internal_retrieval.py`: Chroma's dense ordering is fused with BM25 lexical ranking to create a broad candidate pool; parent context is injected for each child segment, then a cross-encoder reranks `question x (parent context + child evidence)` before the final cited passages are selected;
-- optional HyDE in `internal_retrieval.py`, using a variable-grounded hypothetical passage to improve semantic search;
-- `political_graph.py`, a C02b knowledge-graph component that summarizes inferred relations between political actors under temporal constraints.
+`CountryMemory` combine SQLite pour les données structurées et ChromaDB pour les passages. Une collection `compass_country_<iso3>` est créée par pays. Les filtres temporels utilisent `doc_date_ord`, valeur numérique compatible avec les comparaisons Chroma.
+
+## Chunking et retrieval
+
+Le document est découpé en parents contextuels et enfants citables. Le chat recherche les enfants, rattache leur parent, fusionne dense et BM25, puis applique le cross-encoder configuré.
+
+## Chat
+
+Le chat route d'abord la requête : lookup direct, question sur le périmètre du corpus ou question politique. Le routage peut être déterministe ou confié au LLM avec repli automatique. La politique de validation dépend ensuite de la route.
+
+## État du corpus mondial
+
+Les collections restent actuellement séparées par pays et le chat est lancé avec un pays obligatoire. La façade multi-pays et les protections anti-contamination sont un chantier différé, décrit dans la roadmap.
