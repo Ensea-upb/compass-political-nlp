@@ -29,6 +29,14 @@ Before retrieval, the chat routes each request:
 
 This prevents metadata questions from retrieving unrelated manifesto fragments or being rejected for missing `[Sx]` citations.
 
+`AnswerValidator` uses an explicit policy attached to the selected route:
+
+- `direct_lookup` -> `none` because the response is deterministic;
+- `corpus_scope` -> `none` because the response describes session metadata;
+- `evidence_query` -> `strict_evidence`, requiring valid `[Sx]` citations and rejecting analytical/general-context citations.
+
+Unknown routes or validation policies fail closed.
+
 The chat now separates three kinds of prompt material:
 
 - cited evidence: short child segments used as proof and exposed as `[S1]`, `[S2]`;

@@ -16,6 +16,7 @@ from compass.chat.engine import (
     route_chat_question,
     strip_appended_sources,
     validate_llm_answer,
+    validation_policy_for_route,
 )
 
 
@@ -187,6 +188,13 @@ def test_chat_question_router_distinguishes_scope_lookup_and_evidence():
     assert route_chat_question("tu es connecte a quel corpus ?") == "corpus_scope"
     assert route_chat_question("je veux doc1:p303c001") == "direct_lookup"
     assert route_chat_question("Que dit le parti sur la democratie ?") == "evidence_query"
+
+
+def test_answer_validation_policy_depends_on_route():
+    assert validation_policy_for_route("direct_lookup") == "none"
+    assert validation_policy_for_route("corpus_scope") == "none"
+    assert validation_policy_for_route("evidence_query") == "strict_evidence"
+    validate_llm_answer("Session corpus description without citation.", [], route="corpus_scope")
 
 
 def test_build_citations_and_format_sources():

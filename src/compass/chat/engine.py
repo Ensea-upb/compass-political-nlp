@@ -39,6 +39,12 @@ _INSUFFICIENT_MARKERS = (
     "ne permet pas",
 )
 
+_ROUTE_VALIDATION_POLICIES = {
+    "direct_lookup": "none",
+    "corpus_scope": "none",
+    "evidence_query": "strict_evidence",
+}
+
 _ANALYTICAL_LENSES = {
     "democracy": {
         "triggers": {
@@ -255,7 +261,7 @@ class ChatEngine:
             if not answer:
                 raise RuntimeError("Empty LLM response")
             answer = strip_appended_sources(answer)
-            validate_llm_answer(answer, citations)
+            validate_llm_answer(answer, citations, route=route)
             return ChatResponse(
                 answer=answer,
                 citations=citations,
@@ -613,7 +619,11 @@ def strip_appended_sources(answer: str) -> str:
     return stripped
 
 
-def validate_llm_answer(answer: str, citations: list[Citation]) -> None:
+def validate_llm_answer(
+    answer: str,
+    citations: list[Citation],
+    route: str = "evidence_query",
+) -> None:
     """Reject LLM answers that escape the evidence contract.
 
     The prompt is necessary but not sufficient. This deterministic validator
@@ -624,6 +634,12 @@ def validate_llm_answer(answer: str, citations: list[Citation]) -> None:
     text = answer.strip()
     if not text:
         raise AnswerContractError("empty answer")
+
+    policy = validation_policy_for_route(route)
+    if policy == "none":
+        return
+    if policy != "strict_evidence":
+        raise AnswerContractError(f"unknown validation policy: {policy}")
 
     refs = _ANSWER_REF_RE.findall(text)
     forbidden = [ref for ref in refs if ref == "A" or ref.startswith("C")]
@@ -643,6 +659,13 @@ def validate_llm_answer(answer: str, citations: list[Citation]) -> None:
 def _is_insufficiency_answer(answer: str) -> bool:
     lowered = answer.lower()
     return any(marker in lowered for marker in _INSUFFICIENT_MARKERS)
+
+
+def validation_policy_for_route(route: str) -> str:
+    """Return the answer-validation contract attached to a chat route."""
+    if route not in _ROUTE_VALIDATION_POLICIES:
+        raise AnswerContractError(f"unknown chat route: {route}")
+    return _ROUTE_VALIDATION_POLICIES[route]
 
 
 def build_extractive_answer(question: str, citations: list[Citation], exc: Exception) -> str:
