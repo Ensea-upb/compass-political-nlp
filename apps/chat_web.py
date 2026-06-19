@@ -78,9 +78,17 @@ HTML = """<!doctype html>
       if (promptUrl) {
         const link = document.createElement('a');
         link.href = promptUrl;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
+        link.target = 'compass_prompt_viewer';
         link.textContent = 'Voir le prompt LLM';
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          const promptWindow = window.open(promptUrl, 'compass_prompt_viewer');
+          if (promptWindow) {
+            promptWindow.focus();
+          } else {
+            window.location.href = promptUrl;
+          }
+        });
         div.appendChild(document.createElement('br'));
         div.appendChild(document.createElement('br'));
         div.appendChild(link);
@@ -322,7 +330,7 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
   <main>
     <header>
       <h1>Prompt envoye au LLM</h1>
-      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. Les blocs <code>GENERAL_CONTEXT</code> cadrent la reponse; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
+      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. <code>ANALYTICAL_CONTEXT</code> donne le cadre conceptuel, <code>GENERAL_CONTEXT</code> donne le contexte documentaire; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
     </header>
     {cards}
     <details>
@@ -347,6 +355,7 @@ def _render_prompt_message(message: dict[str, str]) -> str:
 
 def _highlight_prompt_content(content: str) -> str:
     replacements = {
+        "ANALYTICAL_CONTEXT": "<mark>ANALYTICAL_CONTEXT</mark>",
         "GENERAL_CONTEXT": "<mark>GENERAL_CONTEXT</mark>",
         "CITED_EVIDENCE": "<mark>CITED_EVIDENCE</mark>",
         "Answer contract": "<mark>Answer contract</mark>",

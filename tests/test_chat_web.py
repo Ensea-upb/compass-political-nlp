@@ -99,10 +99,11 @@ def test_chat_web_source_followup_helpers():
 def test_chat_web_prompt_page_is_human_readable():
     page = render_prompt_page([
         {"role": "system", "content": "Do not use outside knowledge."},
-        {"role": "user", "content": "GENERAL_CONTEXT\ncontext\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
+        {"role": "user", "content": "ANALYTICAL_CONTEXT\nframe\n\nGENERAL_CONTEXT\ncontext\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
     ])
 
     assert "Prompt envoye au LLM" in page
+    assert "<mark>ANALYTICAL_CONTEXT</mark>" in page
     assert "<mark>GENERAL_CONTEXT</mark>" in page
     assert "<mark>CITED_EVIDENCE</mark>" in page
     assert "Voir le JSON exact envoye" in page
@@ -115,3 +116,5 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "Non-JSON response from server" in HTML
     assert "prompt_url" in HTML
     assert "Voir le prompt LLM" in HTML
+    assert "compass_prompt_viewer" in HTML
+    assert "window.open(promptUrl, 'compass_prompt_viewer')" in HTML

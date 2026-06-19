@@ -19,12 +19,78 @@ from compass.llm_client import complete_chat
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
 _MAX_PROMPT_CITATIONS = 6
 _MAX_GENERAL_CONTEXT_ITEMS = 2
-_MAX_EVIDENCE_TEXT_CHARS = 280
-_MAX_PARENT_CONTEXT_CHARS = 180
-_MAX_GENERAL_CONTEXT_CHARS = 260
+_MAX_EVIDENCE_TEXT_CHARS = 220
+_MAX_PARENT_CONTEXT_CHARS = 140
+_MAX_GENERAL_CONTEXT_CHARS = 200
+_MAX_ANALYTICAL_CONTEXT_CHARS = 650
 _MAX_CHAT_HISTORY_MESSAGES = 2
 _MAX_CHAT_HISTORY_CHARS = 240
 _MAX_CHAT_OUTPUT_TOKENS = 650
+_ANSWER_REF_RE = re.compile(r"\[(A|C\d+|S\d+)\]")
+_INSUFFICIENT_MARKERS = (
+    "insufficient evidence",
+    "provided evidence is insufficient",
+    "not enough evidence",
+    "does not answer",
+    "preuves insuffisantes",
+    "elements insuffisants",
+    "éléments insuffisants",
+    "ne permet pas",
+)
+
+_ANALYTICAL_LENSES = {
+    "democracy": {
+        "triggers": {
+            "democracy", "democratic", "democratie", "democratique",
+            "rights", "freedom", "parliament", "election", "constitutional",
+            "citizens", "participation",
+        },
+        "frame": (
+            "For democracy questions, separate institutions, rights, participation, "
+            "rule of law, electoral competition, and social-democratic or constitutional claims."
+        ),
+    },
+    "european_integration": {
+        "triggers": {
+            "europe", "european", "eu", "union", "integration", "lisbon",
+            "turkey", "enlargement", "brussels",
+        },
+        "frame": (
+            "For European integration questions, distinguish support for the EU, reform of EU institutions, "
+            "enlargement, sovereignty transfer, treaty politics, and practical policy cooperation."
+        ),
+    },
+    "economy": {
+        "triggers": {
+            "economy", "economic", "economie", "emploi", "jobs", "wages",
+            "industry", "growth", "tax", "market", "exports", "innovation",
+        },
+        "frame": (
+            "For economic questions, distinguish goals, instruments, beneficiaries, fiscal measures, "
+            "labor-market commitments, industrial policy, growth model, and distributional effects."
+        ),
+    },
+    "migration": {
+        "triggers": {
+            "migration", "immigration", "asylum", "refugees", "diaspora",
+            "migrants", "integration",
+        },
+        "frame": (
+            "For migration questions, distinguish border control, asylum rights, integration policy, "
+            "labor migration, citizenship, and humanitarian commitments."
+        ),
+    },
+    "environment": {
+        "triggers": {
+            "environment", "ecology", "ecological", "climate", "energy",
+            "sustainability", "sustainable", "renewable",
+        },
+        "frame": (
+            "For environment questions, distinguish climate goals, energy transition, regulation, "
+            "industrial adaptation, agriculture, infrastructure, and intergenerational responsibility."
+        ),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +146,10 @@ class ChatResponse:
     retrieval_count: int
     general_context: list[GeneralContext] = field(default_factory=list)
     prompt_messages: list[dict[str, str]] = field(default_factory=list)
+
+
+class AnswerContractError(RuntimeError):
+    """Raised when an LLM answer violates COMPASS citation discipline."""
 
 
 class ChatEngine:
@@ -160,6 +230,7 @@ class ChatEngine:
             if not answer:
                 raise RuntimeError("Empty LLM response")
             answer = strip_appended_sources(answer)
+            validate_llm_answer(answer, citations)
             return ChatResponse(
                 answer=answer,
                 citations=citations,
@@ -274,22 +345,25 @@ def build_messages(
         for citation in prompt_citations
     )
     general_context_text = format_general_context_for_prompt(general_context or [])
+    analytical_context_text = build_analytical_context(question)
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
         "Your task is evidence-grounded analysis, not open-ended political commentary. "
         "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
-        "There are two inputs: GENERAL_CONTEXT and CITED_EVIDENCE. "
+        "There are three inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, and CITED_EVIDENCE. "
+        "ANALYTICAL_CONTEXT gives a political-science reading frame; it is not factual evidence and must never be cited. "
         "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
         "CITED_EVIDENCE contains the only passages that may support claims. "
         "Every substantive political claim must end with an inline citation like [S1] or [S2]. "
-        "Never cite [C1], [C2], or any GENERAL_CONTEXT label. "
+        "Never cite [A], [C1], [C2], or any analytical/general-context label. "
         "If the cited evidence does not answer the question, say that the provided evidence is insufficient and explain what is missing. "
         "If a user premise is not supported by the cited evidence, correct it cautiously instead of accepting it. "
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
         "Do not infer motives, psychology, or hidden positions beyond the passages. "
         "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
         "Prefer short evidence-linked sentences over broad summaries. "
+        "Use only source ids shown in CITED_EVIDENCE; if a claim lacks an [S] source, omit it. "
         "Before answering, internally verify that each sentence with a political claim has at least one [S] citation. "
         f"Answer in {language}."
     )
@@ -299,6 +373,8 @@ def build_messages(
     user = (
         f"Scope: {scope}\n\n"
         f"Question: {question}\n\n"
+        "ANALYTICAL_CONTEXT - conceptual reading frame, never cite this block:\n"
+        f"{analytical_context_text}\n\n"
         "GENERAL_CONTEXT - background only, never cite this block:\n"
         f"{general_context_text}\n\n"
         "CITED_EVIDENCE - the only claim-supporting evidence:\n"
@@ -306,7 +382,10 @@ def build_messages(
         "Answer contract:\n"
         "- Answer the question directly.\n"
         "- Use [S1], [S2], etc. for every claim.\n"
-        "- Do not cite [C1] or other general-context labels.\n"
+        "- Never invent source ids. Use only the [S] ids present above.\n"
+        "- Use ANALYTICAL_CONTEXT only to understand the political concept being asked about.\n"
+        "- Do not cite [A], [C1], or other analytical/general-context labels.\n"
+        "- If no [S] passage supports the answer, say evidence is insufficient.\n"
         "- If evidence is weak or absent, say so explicitly."
     )
     history = compact_history(
@@ -390,6 +469,36 @@ def build_general_context_query(question: str) -> str:
     )
 
 
+def build_analytical_context(question: str) -> str:
+    """Return a compact non-cited political-science frame for the prompt.
+
+    This is not factual knowledge about the party or election. It tells the LLM
+    what analytical dimensions to look for in the cited evidence, which reduces
+    overinterpretation without making a second LLM call.
+    """
+    query_tokens = set(re.findall(r"[\w']+", question.lower()))
+    lines = [
+        "[A] Analytical frame, not evidence:",
+        "- Interpret the political text under the given date and party scope.",
+        "- Separate declared position, policy instrument, target group, value, and institutional implication.",
+        "- Distinguish explicit claims from indirect inference.",
+        "- Do not import external facts, party reputation, or theory as evidence.",
+    ]
+    matched = [
+        lens["frame"]
+        for lens in _ANALYTICAL_LENSES.values()
+        if query_tokens & lens["triggers"]
+    ]
+    if matched:
+        lines.append("- Question-specific lens: " + " ".join(matched[:2]))
+    else:
+        lines.append(
+            "- Question-specific lens: identify the political concept in the question, "
+            "then look for explicit claims, policy tools, beneficiaries, and limits in the cited passages."
+        )
+    return _excerpt("\n".join(lines), max_chars=_MAX_ANALYTICAL_CONTEXT_CHARS)
+
+
 def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
     if not items:
         return "No separate general context retrieved."
@@ -449,6 +558,38 @@ def strip_appended_sources(answer: str) -> str:
         if idx != -1:
             return stripped[:idx].strip()
     return stripped
+
+
+def validate_llm_answer(answer: str, citations: list[Citation]) -> None:
+    """Reject LLM answers that escape the evidence contract.
+
+    The prompt is necessary but not sufficient. This deterministic validator
+    prevents the UI from displaying answers that cite analytical/general
+    context, invent source ids, or make a substantive answer with no cited
+    evidence.
+    """
+    text = answer.strip()
+    if not text:
+        raise AnswerContractError("empty answer")
+
+    refs = _ANSWER_REF_RE.findall(text)
+    forbidden = [ref for ref in refs if ref == "A" or ref.startswith("C")]
+    if forbidden:
+        raise AnswerContractError("answer cited analytical/general context")
+
+    valid_source_ids = {citation.ref_id for citation in citations[:_MAX_PROMPT_CITATIONS]}
+    source_refs = [ref for ref in refs if ref.startswith("S")]
+    unknown = sorted({ref for ref in source_refs if ref not in valid_source_ids})
+    if unknown:
+        raise AnswerContractError(f"answer cited unknown source ids: {', '.join(unknown)}")
+
+    if not source_refs and not _is_insufficiency_answer(text):
+        raise AnswerContractError("substantive answer without cited evidence")
+
+
+def _is_insufficiency_answer(answer: str) -> bool:
+    lowered = answer.lower()
+    return any(marker in lowered for marker in _INSUFFICIENT_MARKERS)
 
 
 def build_extractive_answer(question: str, citations: list[Citation], exc: Exception) -> str:

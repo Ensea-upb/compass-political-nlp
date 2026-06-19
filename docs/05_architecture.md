@@ -36,6 +36,6 @@ This separation keeps the public demo lightweight while preserving the real rese
 Recent integration work adds three research-oriented improvements:
 
 - parent-child + semantic chunking in `document_pipeline.py` and `country_memory.py`: parent blocks preserve paragraph-level context, semantic topic shifts can start new parents, while child segments are citation units built from sentence/list fragments; very short fragments are merged and oversized fragments are split before indexing;
-- hybrid retrieval in `country_memory.py`, `chat/engine.py`, and `internal_retrieval.py`: Chroma's dense ordering is fused with BM25 lexical ranking, question-aware profile boosts prioritize direct evidence for themes such as democracy/economy, then parent context is injected for each child segment;
+- hybrid retrieval in `country_memory.py`, `chat/engine.py`, and `internal_retrieval.py`: Chroma's dense ordering is fused with BM25 lexical ranking to create a broad candidate pool; parent context is injected for each child segment, then a cross-encoder reranks `question x (parent context + child evidence)` before the final cited passages are selected;
 - optional HyDE in `internal_retrieval.py`, using a variable-grounded hypothetical passage to improve semantic search;
 - `political_graph.py`, a C02b knowledge-graph component that summarizes inferred relations between political actors under temporal constraints.

@@ -39,6 +39,9 @@ from compass.schemas import Segment
 
 logger = logging.getLogger(__name__)
 
+_RERANKER = None
+_RERANKER_UNAVAILABLE = False
+
 _QUESTION_PROFILES = {
     "democracy": {
         "triggers": {
@@ -244,12 +247,16 @@ class CountryMemory:
         party_id: str | None = None, include_unverified: bool = False,
         include_parent_segments: bool = False,
     ) -> list[dict]:
-        """Dense Chroma retrieval fused with BM25 lexical ranking.
+        """Dense + BM25 retrieval followed by optional cross-encoder reranking.
 
         This is the default retrieval shape expected by COMPASS Chat: dense
-        semantic ordering gives recall, BM25 reinforces exact political terms,
-        and parent chunks remain available through ``parent_segment_id``.
+        semantic ordering gives recall, BM25 reinforces exact political terms.
+        The final ranking is delegated to a cross-encoder over
+        ``question`` x ``parent_context + child_segment`` so the model sees
+        the local manifesto section without turning parent blocks into cited
+        evidence.
         """
+        rerank_pool_size = max(k, settings.rerank_pool_size, k * 3)
         clauses = self._document_clauses(
             as_of=as_of,
             party_id=party_id,
@@ -259,16 +266,17 @@ class CountryMemory:
         dense = self.query_documents(
             question,
             as_of=as_of,
-            k=max(k * 4, 24),
+            k=max(rerank_pool_size, k * 4, 24),
             party_id=party_id,
             include_unverified=include_unverified,
             include_parent_segments=include_parent_segments,
         )
-        lexical_pool = self._get_records(clauses, limit=max(k * 40, 200))
+        lexical_pool = self._get_records(clauses, limit=max(rerank_pool_size * 8, 200))
         if not lexical_pool:
-            return dense[:k]
+            return _cross_encoder_rerank(question, self._inject_parent_text(dense), k)
         candidates = _dedupe_records(dense + lexical_pool)
-        return _hybrid_rank(question, candidates, dense, k=k)
+        hybrid_pool = _hybrid_rank(question, candidates, dense, k=rerank_pool_size)
+        return _cross_encoder_rerank(question, self._inject_parent_text(hybrid_pool), k)
 
     def _query_chroma(self, question: str, k: int, clauses: list[dict]) -> dict:
         where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
@@ -307,6 +315,26 @@ class CountryMemory:
             {"segment_id": sid, "text": doc, "meta": meta or {}}
             for sid, doc, meta in zip(res.get("ids", []), res.get("documents", []), metadatas)
         ]
+
+    def _inject_parent_text(self, records: list[dict]) -> list[dict]:
+        """Attach parent manifesto context to child records before reranking."""
+        parent_ids = sorted({
+            str((record.get("meta") or {}).get("parent_segment_id") or "")
+            for record in records
+            if (record.get("meta") or {}).get("parent_segment_id")
+        })
+        if not parent_ids:
+            return records
+        parent_texts = self.fetch_by_ids(parent_ids)
+        out: list[dict] = []
+        for record in records:
+            enriched = dict(record)
+            meta = record.get("meta") or {}
+            parent_id = str(meta.get("parent_segment_id") or "")
+            if parent_id and parent_id in parent_texts:
+                enriched["parent_text"] = parent_texts[parent_id]
+            out.append(enriched)
+        return out
 
 
 def _has_results(result: dict) -> bool:
@@ -348,6 +376,64 @@ def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: in
         )
         ranked.append(enriched)
     return sorted(ranked, key=lambda item: float(item.get("hybrid_score") or 0.0), reverse=True)[:k]
+
+
+def _cross_encoder_rerank(question: str, records: list[dict], k: int) -> list[dict]:
+    if not getattr(settings, "rerank_enabled", True) or len(records) <= 1:
+        return records[:k]
+    try:
+        scores = _cross_encoder_scores(question, records)
+    except Exception as exc:  # pragma: no cover - depends on local model availability
+        logger.warning("Cross-encoder reranking disabled for this query: %s", exc)
+        return records[:k]
+
+    ranked: list[dict] = []
+    for record, score in zip(records, scores):
+        enriched = dict(record)
+        enriched["rerank_score"] = float(score)
+        enriched["retrieval_reason"] = _append_reason(
+            str(enriched.get("retrieval_reason") or ""),
+            f"cross_encoder_score={float(score):.4f}",
+        )
+        ranked.append(enriched)
+    return sorted(ranked, key=lambda item: float(item.get("rerank_score") or 0.0), reverse=True)[:k]
+
+
+def _cross_encoder_scores(question: str, records: list[dict]):
+    reranker = _get_reranker()
+    pairs = [(question, _rerank_text(record)) for record in records]
+    return reranker.predict(pairs)
+
+
+def _get_reranker():
+    global _RERANKER, _RERANKER_UNAVAILABLE
+    if _RERANKER is not None:
+        return _RERANKER
+    if _RERANKER_UNAVAILABLE:
+        raise RuntimeError("cross-encoder unavailable")
+    try:
+        from sentence_transformers import CrossEncoder
+
+        kwargs = {"device": settings.hf_model_device()} if settings.hf_model_device() else {}
+        _RERANKER = CrossEncoder(settings.reranker_model, **kwargs)
+        return _RERANKER
+    except Exception as exc:
+        _RERANKER_UNAVAILABLE = True
+        raise RuntimeError(f"could not load cross-encoder {settings.reranker_model}: {exc}") from exc
+
+
+def _rerank_text(record: dict) -> str:
+    parent = str(record.get("parent_text") or "").strip()
+    child = str(record.get("text") or "").strip()
+    if parent and child and child not in parent:
+        return f"{parent}\n\nEvidence segment:\n{child}"
+    return parent or child
+
+
+def _append_reason(existing: str, reason: str) -> str:
+    if not existing:
+        return reason
+    return f"{existing} | {reason}"
 
 
 def _dedupe_records(records: list[dict]) -> list[dict]:

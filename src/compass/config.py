@@ -134,6 +134,8 @@ class CompassSettings(LLMConfig):
 
     embedding_model: str = "BAAI/bge-m3"
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_enabled: bool = True
+    rerank_pool_size: int = 24
     nli_model: str = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
     political_classifier: str = "mlburnham/Political_DEBATE_large_v1.0"
 

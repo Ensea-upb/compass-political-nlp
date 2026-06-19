@@ -275,6 +275,81 @@ class TestGap1_HierarchicalChunking:
         assert "profile_boost" in result[0]["retrieval_reason"]
         assert "profile_missing_direct_terms" in result[1]["retrieval_reason"]
 
+    def test_query_documents_hybrid_cross_encoder_reads_parent_context(self, monkeypatch):
+        from tests.conftest import CHROMA_COL
+        from compass import country_memory
+
+        memory = _country_memory()
+        CHROMA_COL.query.reset_mock()
+        CHROMA_COL.get.reset_mock()
+        CHROMA_COL.query.return_value = {
+            "ids": [["low:p000c000"]],
+            "documents": [["General institutional text."]],
+            "metadatas": [[{
+                "party_id": "pd_sen",
+                "segment_level": "child",
+                "parent_segment_id": "low:p000",
+            }]],
+        }
+        CHROMA_COL.get.side_effect = [
+            {
+                "ids": ["low:p000c000", "high:p000c000"],
+                "documents": [
+                    "General institutional text.",
+                    "The party defends elections and constitutional accountability.",
+                ],
+                "metadatas": [
+                    {
+                        "party_id": "pd_sen",
+                        "segment_level": "child",
+                        "parent_segment_id": "low:p000",
+                    },
+                    {
+                        "party_id": "pd_sen",
+                        "segment_level": "child",
+                        "parent_segment_id": "high:p000",
+                    },
+                ],
+            },
+            {
+                "ids": ["high:p000", "low:p000"],
+                "documents": [
+                    "Parent section on democracy, elections, parliament, and citizen rights.",
+                    "Parent section on general administration.",
+                ],
+            },
+        ]
+
+        def fake_scores(question, records):
+            return [0.9 if item["segment_id"] == "high:p000c000" else 0.1 for item in records]
+
+        monkeypatch.setattr(country_memory, "_cross_encoder_scores", fake_scores)
+
+        result = memory.query_documents_hybrid(
+            "What does the party say about democracy?",
+            as_of=date(2024, 3, 24),
+            party_id="pd_sen",
+            k=1,
+        )
+
+        assert result[0]["segment_id"] == "high:p000c000"
+        assert result[0]["parent_text"].startswith("Parent section on democracy")
+        assert result[0]["rerank_score"] == 0.9
+        assert "cross_encoder_score=0.9000" in result[0]["retrieval_reason"]
+        CHROMA_COL.get.side_effect = None
+
+    def test_rerank_text_combines_parent_and_child(self):
+        from compass.country_memory import _rerank_text
+
+        text = _rerank_text({
+            "parent_text": "Parent context about democratic institutions.",
+            "text": "The party supports transparent elections.",
+        })
+
+        assert "Parent context about democratic institutions." in text
+        assert "Evidence segment:" in text
+        assert "The party supports transparent elections." in text
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Gap 2 — HyDE dans C06

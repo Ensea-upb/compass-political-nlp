@@ -10,7 +10,9 @@ User question
 -> CountryMemory.query_documents_hybrid()
 -> dense retrieval + BM25 fusion
 -> question-aware evidence boost
+-> cross-encoder reranking over parent context + child segment
 -> cited evidence segments
+-> analytical political-science context
 -> parent/general context retrieval
 -> local vLLM through compass.llm_client
 -> answer with [S1], [S2] citations
@@ -19,18 +21,21 @@ User question
 
 If vLLM is not running, the engine returns an extractive answer from the retrieved passages instead of failing.
 
-The chat now separates two kinds of context:
+The chat now separates three kinds of prompt material:
 
 - cited evidence: short child segments used as proof and exposed as `[S1]`, `[S2]`;
+- analytical context: a compact political-science reading frame derived from the question, used to identify relevant dimensions such as institutions, instruments, beneficiaries, rights, integration, or policy mechanisms;
 - general context: parent-level manifesto blocks used only to frame the answer.
 
-This matters for demos and audits: the model can understand the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
+This matters for demos and audits: the model can understand both the political concept and the broader manifesto section, but every substantive claim must still be supported by a cited evidence segment.
 
 The child segments are not raw one-word or one-line fragments. During ingestion, COMPASS merges very short fragments with neighboring text, splits oversized fragments, and can start new parent blocks when semantic cohesion drops. This is why source excerpts should be more readable after reindexing: instead of citations such as `Setting impulses.`, the chat should retrieve fuller citation units.
 
-The retrieval layer also applies question-aware evidence scoring. For example, a question about democracy boosts passages containing direct terms such as `democracy`, `democratic`, `citizens`, `participation`, `parliament`, `rights`, or `constitutional`, and demotes indirect passages that only match broad context. The prompt page exposes `retrieval_reason` for each cited passage so the selection can be audited.
+The retrieval layer first builds a broad candidate pool with dense Chroma retrieval, BM25 lexical matching, and light question-aware evidence scoring. It then reranks the pool with the configured cross-encoder (`COMPASS_RERANKER_MODEL`, default `BAAI/bge-reranker-v2-m3`). The cross-encoder receives the user question paired with `parent context + child segment`: the parent block gives enough local manifesto context to judge relevance, while the child segment remains the citable proof shown as `[S1]`, `[S2]`, etc.
 
-After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens a local inspection page containing a human-readable rendering of the exact message list sent to the OpenAI-compatible vLLM endpoint, plus a collapsible raw JSON view for auditability. Source details are no longer appended at the end of every chat answer; the answer itself should cite evidence inline with `[S1]`, `[S2]`, etc.
+The prompt page exposes `retrieval_reason` for each cited passage, including `dense_rank`, `bm25_rank`, profile notes, and `cross_encoder_score`, so the selection can be audited.
+
+After each LLM answer, the web interface displays a `Voir le prompt LLM` link. It opens or reuses a single prompt-inspection tab, so clicking the link for another answer updates the same page instead of creating many tabs. The page contains a human-readable rendering of the exact message list sent to the OpenAI-compatible vLLM endpoint, plus a collapsible raw JSON view for auditability. Source details are no longer appended at the end of every chat answer; the answer itself should cite evidence inline with `[S1]`, `[S2]`, etc.
 
 For small local vLLM models, the chat also applies a prompt budget:
 
@@ -64,6 +69,8 @@ export COMPASS_LLM_API_KEY=EMPTY
 export COMPASS_JUDGE_MODELS=Qwen/Qwen2.5-3B-Instruct
 export COMPASS_HYDE_MODEL=Qwen/Qwen2.5-3B-Instruct
 export COMPASS_HF_DEVICE=cpu
+export COMPASS_RERANK_ENABLED=true
+export COMPASS_RERANK_POOL_SIZE=24
 
 python apps/chat_web.py \
   --country DEU \
@@ -105,12 +112,15 @@ Expose port `7860` in the Onyxia service configuration if you want to open the U
 
 When the local vLLM server is running, COMPASS Chat answers with a short synthesis and cites retrieved passages inline as `[S1]`, `[S2]`, etc. The prompt asks the model to attach an inline citation to every substantive claim and to avoid interpretations that are not directly supported by the retrieved passages. The chat interface does not append a separate source bibliography after each answer; use `Voir le prompt LLM` to inspect the evidence behind each `[Sx]`.
 
-The prompt receives two explicitly separated blocks:
+The prompt receives three explicitly separated blocks:
 
+- `ANALYTICAL_CONTEXT`: conceptual and theoretical reading frame. It is not factual evidence, cannot be cited, and cannot introduce facts about the party.
 - `GENERAL_CONTEXT`: broader parent chunks from the same country, date filter, and party scope. This is background only. The model is explicitly forbidden to cite `[C1]`, `[C2]`, or to use this block as proof.
 - `CITED_EVIDENCE`: the only passages allowed to support political claims. Every substantive claim must cite `[S1]`, `[S2]`, etc.
 
 The prompt is calibrated to reduce hallucination risk: it forbids outside knowledge, asks the model to reject unsupported user premises cautiously, and requires an explicit insufficiency statement when the cited evidence does not answer the question.
+
+The chat also validates the LLM output before displaying it. If the model cites `ANALYTICAL_CONTEXT` or `GENERAL_CONTEXT`, invents a source id that was not shown in `CITED_EVIDENCE`, or gives a substantive answer without any `[Sx]` citation, COMPASS rejects the generated answer and falls back to an extractive evidence-only response. This keeps the demo usable even with small local models that sometimes ignore part of the prompt.
 
 The prompt inspection page is designed for demos. Its `CITED_EVIDENCE` block includes metadata, segment id, and excerpt-style evidence:
 

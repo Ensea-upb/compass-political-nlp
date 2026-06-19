@@ -3,6 +3,7 @@ from datetime import date
 import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
 from compass.chat.engine import (
+    build_analytical_context,
     build_citations,
     build_general_context_items,
     build_messages,
@@ -13,6 +14,7 @@ from compass.chat.engine import (
     format_general_context_for_prompt,
     infer_answer_language,
     strip_appended_sources,
+    validate_llm_answer,
 )
 
 
@@ -113,6 +115,45 @@ def test_chat_engine_falls_back_when_llm_fails(monkeypatch):
     assert response.citations
 
 
+def test_chat_engine_falls_back_when_llm_cites_general_context(monkeypatch):
+    def bad_complete(*args, **kwargs):
+        return "The party supports democracy based on the general context [C1]."
+
+    monkeypatch.setattr(chat_engine, "complete_chat", bad_complete)
+    response = ChatEngine(FakeMemory(), model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320")
+    )
+
+    assert response.llm_used is False
+    assert "Reponse extractive COMPASS" in response.answer
+
+
+def test_chat_engine_falls_back_when_llm_invents_source_id(monkeypatch):
+    def bad_complete(*args, **kwargs):
+        return "The party supports democracy [S9]."
+
+    monkeypatch.setattr(chat_engine, "complete_chat", bad_complete)
+    response = ChatEngine(FakeMemory(), model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320")
+    )
+
+    assert response.llm_used is False
+    assert "Reponse extractive COMPASS" in response.answer
+
+
+def test_chat_engine_falls_back_when_llm_answers_without_citation(monkeypatch):
+    def bad_complete(*args, **kwargs):
+        return "The party strongly supports democracy and transparent elections."
+
+    monkeypatch.setattr(chat_engine, "complete_chat", bad_complete)
+    response = ChatEngine(FakeMemory(), model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="41320")
+    )
+
+    assert response.llm_used is False
+    assert "Reponse extractive COMPASS" in response.answer
+
+
 def test_build_citations_and_format_sources():
     citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
     formatted = format_citations(citations)
@@ -166,8 +207,9 @@ def test_chat_prompt_requires_evidence_linked_claims():
     assert "Every substantive political claim" in system
     assert "Do not overinterpret" in system
     assert "Do not use outside knowledge" in system
-    assert "Never cite [C1]" in system
+    assert "Never cite [A]" in system
     assert "provided evidence is insufficient" in system
+    assert "ANALYTICAL_CONTEXT - conceptual reading frame" in messages[-1]["content"]
     assert "GENERAL_CONTEXT - background only" in messages[-1]["content"]
     assert "CITED_EVIDENCE - the only claim-supporting evidence" in messages[-1]["content"]
     assert "Answer contract" in messages[-1]["content"]
@@ -177,6 +219,12 @@ def test_strip_appended_sources_removes_model_bibliography():
     answer = "Analysis [S1].\n\nSources\n- [S1] duplicated"
 
     assert strip_appended_sources(answer) == "Analysis [S1]."
+
+
+def test_validate_llm_answer_allows_insufficiency_without_citation():
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+
+    validate_llm_answer("The provided evidence is insufficient to answer this question.", citations)
 
 
 def test_compact_history_trims_sources_and_long_answers():
@@ -310,6 +358,15 @@ def test_general_context_format_is_background_only():
 
     assert "[C1]" in formatted
     assert "segment=doc1:p000" in formatted
+
+
+def test_analytical_context_is_conceptual_not_evidence():
+    context = build_analytical_context("Give me evidence on European integration.")
+
+    assert "[A] Analytical frame" in context
+    assert "not evidence" in context
+    assert "European integration" in context
+    assert "must" not in context.lower() or "evidence" in context.lower()
 
 
 def test_chat_prompt_is_bounded_for_small_vllm_contexts():
