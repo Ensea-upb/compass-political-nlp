@@ -39,10 +39,10 @@ After each LLM answer, the web interface displays a `Voir le prompt LLM` link. I
 
 For small local vLLM models, the chat also applies a prompt budget:
 
-- at most 6 cited evidence passages are sent to the LLM;
-- at most 2 general context blocks are sent;
+- at most 4 cited evidence passages are sent to the LLM;
+- at most 1 general context block is sent;
 - parent context, evidence text, and conversation history are truncated;
-- chat answers request at most 650 output tokens.
+- chat answers request at most 350 output tokens.
 
 This avoids common vLLM `400 Bad Request` failures caused by prompts that exceed the model context window, especially with `Qwen/Qwen2.5-3B-Instruct` served at `max_model_len=4096`.
 

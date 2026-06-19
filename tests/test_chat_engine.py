@@ -419,8 +419,8 @@ def test_chat_prompt_is_bounded_for_small_vllm_contexts():
     )
 
     prompt = "\n".join(message["content"] for message in messages)
-    assert len(prompt) < 7000
-    assert "[S6]" in prompt
-    assert "[S7]" not in prompt
-    assert "[C2]" in prompt
-    assert "[C3]" not in prompt
+    assert len(prompt) < 5000
+    assert "[S4]" in prompt
+    assert "[S5]" not in prompt
+    assert "[C1]" in prompt
+    assert "segment=doc1:p001" not in prompt
