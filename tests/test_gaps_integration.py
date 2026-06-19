@@ -231,6 +231,23 @@ class TestGap1_HierarchicalChunking:
         assert scope["document_dates"] == ["2024-01-01", "2024-02-01"]
         assert scope["document_types"] == ["manifesto", "speech"]
 
+    def test_country_memory_lists_parent_records_for_graph_backfill(self):
+        from tests.conftest import CHROMA_COL
+
+        memory = _country_memory()
+        CHROMA_COL.get.reset_mock()
+        CHROMA_COL.get.return_value = {
+            "ids": ["doc:p000"],
+            "documents": ["Parent text."],
+            "metadatas": [{"segment_level": "parent", "party_id": "pd_sen"}],
+        }
+
+        records = memory.list_document_records(party_id="pd_sen", parent_only=True)
+
+        assert records[0]["segment_id"] == "doc:p000"
+        where = CHROMA_COL.get.call_args.kwargs["where"]
+        assert {"segment_level": "parent"} in where["$and"]
+
     def test_query_documents_targets_children_then_falls_back_for_old_indexes(self):
         from tests.conftest import CHROMA_COL
 

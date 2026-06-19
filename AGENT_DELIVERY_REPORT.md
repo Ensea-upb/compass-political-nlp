@@ -56,12 +56,13 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - les fichiers GraphML sont isolés par pays ;
 - les segments déjà ingérés sont mémorisés, ce qui rend la mise à jour idempotente ;
 - chaque arête conserve le pays, le parti, la date et le segment source.
+- `scripts/build_political_graph.py` permet de construire le graphe depuis un index Chroma existant, sans réingérer ni dupliquer les manifestes.
 
 ## Vérifications exécutées
 
 ```text
 python -m pytest -q
-123 passed
+125 passed
 
 ruff check src apps tests examples scripts
 All checks passed!

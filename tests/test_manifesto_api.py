@@ -61,6 +61,33 @@ def test_manifesto_ingestion_updates_and_persists_graph():
     assert graph.saved is True
 
 
+def test_graph_backfill_reconstructs_segments_from_index_records():
+    from scripts.build_political_graph import records_to_segments
+
+    segments, skipped = records_to_segments([
+        {
+            "segment_id": "doc:p000",
+            "text": "Party Alpha signs an alliance with Party Beta.",
+            "meta": {
+                "doc_id": "doc",
+                "country_iso3": "TST",
+                "party_id": "P100",
+                "doc_date": "2020-01-01",
+                "doc_type": "manifesto",
+                "language": "en",
+                "reliability": "official",
+                "segment_level": "parent",
+            },
+        },
+        {"segment_id": "invalid", "text": "No date.", "meta": {}},
+    ], fallback_country="TST")
+
+    assert skipped == 1
+    assert len(segments) == 1
+    assert segments[0].segment_id == "doc:p000"
+    assert segments[0].meta.party_id == "P100"
+
+
 def test_metadata_uses_official_post_keys_and_preserves_missing_items(monkeypatch):
     calls = []
     api = ManifestoAPI(api_key="test-key")

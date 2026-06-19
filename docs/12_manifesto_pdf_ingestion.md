@@ -87,6 +87,18 @@ L'extraction d'entités nécessite un modèle spaCy :
 python -m spacy download xx_ent_wiki_sm
 ```
 
+### Construire le graphe d'un corpus déjà indexé
+
+Il n'est pas nécessaire de retélécharger les manifestes. Après avoir configuré les chemins `COMPASS_CHROMA_DIR`, `COMPASS_SQLITE_PATH` et `COMPASS_GRAPH_PATH`, lancer :
+
+```bash
+python scripts/build_political_graph.py \
+  --country "$COUNTRY_ISO3" \
+  --reset
+```
+
+Le script lit les chunks parents déjà présents dans `CountryMemory`, reconstruit leurs métadonnées, puis écrit le graphe du pays. Sans `--reset`, il met à jour le graphe existant et ignore les identifiants de segments déjà traités.
+
 ## Générer un CSV depuis le core
 
 ```bash

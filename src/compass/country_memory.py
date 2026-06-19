@@ -280,6 +280,44 @@ class CountryMemory:
             }),
         }
 
+    def list_document_records(
+        self,
+        party_id: str | None = None,
+        parent_only: bool = False,
+    ) -> list[dict]:
+        """List indexed documentary records for maintenance and graph backfills."""
+        clauses: list[dict] = []
+        if party_id:
+            clauses.append({"party_id": party_id})
+        if parent_only:
+            clauses.append({"segment_level": "parent"})
+        where = None
+        if clauses:
+            where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        kwargs: dict = {"include": ["documents", "metadatas"]}
+        if where is not None:
+            kwargs["where"] = where
+        try:
+            result = self._col.get(**kwargs)
+        except Exception:
+            # Indexes predating hierarchical chunk metadata have no
+            # ``segment_level`` field. Return their records and let the graph
+            # treat them as flat source segments.
+            fallback_where = {"party_id": party_id} if party_id else None
+            fallback_kwargs: dict = {"include": ["documents", "metadatas"]}
+            if fallback_where is not None:
+                fallback_kwargs["where"] = fallback_where
+            result = self._col.get(**fallback_kwargs)
+        metadatas = result.get("metadatas") or [{} for _ in result.get("ids", [])]
+        return [
+            {"segment_id": sid, "text": document, "meta": metadata or {}}
+            for sid, document, metadata in zip(
+                result.get("ids", []),
+                result.get("documents", []),
+                metadatas,
+            )
+        ]
+
     def query_documents(
         self, question: str, as_of: date, k: int = 12,
         party_id: str | None = None, include_unverified: bool = False,
