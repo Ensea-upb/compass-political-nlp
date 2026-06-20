@@ -94,6 +94,13 @@ Après chaque réponse, ouvrir `Voir le prompt LLM` et vérifier :
 - `PRIMARY_EVIDENCE`, `NUANCE_EVIDENCE` et `COUNTER_EVIDENCE_CANDIDATES` ;
 - les citations `[Sx]` dans chaque affirmation politique.
 
+Le bouton reste sur `Analyse...` pendant l'exécution. L'interface utilise une
+tâche asynchrone et des interrogations courtes du résultat ; une première
+question lente ne doit donc plus produire `Gateway Timeout`. Si ce message
+apparaît encore, mettre le dépôt à jour puis redémarrer le processus du chat,
+car le JavaScript déjà ouvert dans le navigateur peut provenir de l'ancienne
+version.
+
 ## 7. Produire un snapshot de référence
 
 ```bash

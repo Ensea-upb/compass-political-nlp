@@ -12,9 +12,12 @@ import html
 import json
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +31,42 @@ from compass.chat.engine import (
     describe_active_corpus,
     format_citations,
 )
+
+
+class ChatJobQueue:
+    """Run long RAG requests outside the ingress HTTP request lifetime."""
+
+    def __init__(self, max_workers: int = 1) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._lock = Lock()
+
+    def submit(self, operation: Callable[[], dict[str, object]]) -> str:
+        job_id = uuid.uuid4().hex
+        with self._lock:
+            self._jobs[job_id] = {"status": "pending"}
+        self._executor.submit(self._run, job_id, operation)
+        return job_id
+
+    def get(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return dict(job) if job is not None else None
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _run(self, job_id: str, operation: Callable[[], dict[str, object]]) -> None:
+        with self._lock:
+            self._jobs[job_id] = {"status": "running"}
+        try:
+            result = operation()
+        except Exception as exc:
+            job = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        else:
+            job = {"status": "completed", "result": result}
+        with self._lock:
+            self._jobs[job_id] = job
 
 HTML = """<!doctype html>
 <html lang="en">
@@ -160,6 +199,7 @@ HTML = """<!doctype html>
       history.push({role: 'user', content: text});
       question.value = '';
       send.disabled = true;
+      send.textContent = 'Analyse...';
       try {
         const response = await fetch('./ask', {
           method: 'POST',
@@ -171,12 +211,9 @@ HTML = """<!doctype html>
             routing_mode: document.querySelector('input[name="routing_mode"]:checked').value
           })
         });
-        const raw = await response.text();
-        let payload;
-        try {
-          payload = JSON.parse(raw);
-        } catch (parseError) {
-          throw new Error('Non-JSON response from server: ' + raw.slice(0, 240));
+        let payload = await parseJsonResponse(response);
+        if (response.status === 202 && payload.job_id) {
+          payload = await waitForJob(payload.job_id);
         }
         if (!response.ok || payload.error) {
           throw new Error(payload.error || ('HTTP ' + response.status));
@@ -193,9 +230,36 @@ HTML = """<!doctype html>
         addMessage('assistant', 'Erreur COMPASS Chat: ' + err.message, 'error');
       } finally {
         send.disabled = false;
+        send.textContent = 'Envoyer';
         question.focus();
       }
     });
+
+    async function parseJsonResponse(response) {
+      const raw = await response.text();
+      try {
+        return JSON.parse(raw);
+      } catch (parseError) {
+        throw new Error('Non-JSON response from server: ' + raw.slice(0, 240));
+      }
+    }
+
+    async function waitForJob(jobId) {
+      const deadline = Date.now() + 15 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const response = await fetch('./result/' + encodeURIComponent(jobId), {
+          headers: {'Accept': 'application/json'}
+        });
+        const payload = await parseJsonResponse(response);
+        if (response.status === 202) continue;
+        if (!response.ok || payload.error) {
+          throw new Error(payload.error || ('HTTP ' + response.status));
+        }
+        return payload.result;
+      }
+      throw new Error('Le pipeline COMPASS a depasse 15 minutes. Consultez les logs du serveur.');
+    }
     document.querySelectorAll('[data-question]').forEach((button) => {
       button.addEventListener('click', () => {
         question.value = button.dataset.question;
@@ -240,10 +304,14 @@ def main() -> None:
     )
     scope = format_scope_banner(scope_data, cutoff, election_id=args.election_id)
     prompt_store: dict[str, list[dict[str, str]]] = {}
+    job_queue = ChatJobQueue(max_workers=1)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/result/"):
+                self._send_job_result(path.removeprefix("/result/"))
+                return
             if path.startswith("/prompt/"):
                 self._send_prompt_page(path.removeprefix("/prompt/"))
                 return
@@ -272,19 +340,21 @@ def main() -> None:
                 history = payload.get("history") if isinstance(payload.get("history"), list) else []
                 last_sources = payload.get("last_sources") if isinstance(payload.get("last_sources"), list) else []
                 routing_mode = str(payload.get("routing_mode") or "deterministic")
-                payload_out = answer_question_payload(
-                    engine=engine,
-                    question=question,
-                    history=history,
-                    cutoff=cutoff,
-                    party_id=args.party,
-                    election_id=args.election_id,
-                    k=args.k,
-                    prompt_store=prompt_store,
-                    routing_mode=routing_mode,
-                    previous_citations=last_sources,
+                job_id = job_queue.submit(
+                    lambda: answer_question_payload(
+                        engine=engine,
+                        question=question,
+                        history=history,
+                        cutoff=cutoff,
+                        party_id=args.party,
+                        election_id=args.election_id,
+                        k=args.k,
+                        prompt_store=prompt_store,
+                        routing_mode=routing_mode,
+                        previous_citations=last_sources,
+                    )
                 )
-                self._send_json(payload_out)
+                self._send_json({"job_id": job_id, "status": "pending"}, status=202)
             except Exception as exc:
                 self._send_json({"error": f"{type(exc).__name__}: {exc}"}, status=500)
 
@@ -312,10 +382,26 @@ def main() -> None:
             self.end_headers()
             self.wfile.write(data)
 
+        def _send_job_result(self, job_id: str) -> None:
+            job = job_queue.get(job_id)
+            if job is None:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            if job["status"] in {"pending", "running"}:
+                self._send_json({"status": job["status"]}, status=202)
+                return
+            if job["status"] == "failed":
+                self._send_json({"error": job.get("error", "job failed")}, status=500)
+                return
+            self._send_json(job)
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"COMPASS Chat running on http://{args.host}:{args.port}")
     print(scope)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        job_queue.close()
 
 
 def answer_question(

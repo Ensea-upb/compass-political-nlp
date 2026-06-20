@@ -1,6 +1,9 @@
 from datetime import date
+from threading import Event
+from time import sleep
 
 from apps.chat_web import (
+    ChatJobQueue,
     answer_question,
     answer_question_payload,
     format_scope_banner,
@@ -148,6 +151,7 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "fetch('./ask'" in HTML
     assert "fetch('/ask'" not in HTML
     assert "Non-JSON response from server" in HTML
+    assert "fetch('./result/'" in HTML
     assert "prompt_url" in HTML
     assert "Voir le prompt LLM" in HTML
     assert "compass_prompt_viewer" in HTML
@@ -159,6 +163,23 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "last_sources" in HTML
     assert "sources_markdown" in HTML
     assert "data-question" in HTML
+
+
+def test_chat_job_queue_returns_long_running_result_without_blocking_submit():
+    queue = ChatJobQueue()
+    release = Event()
+    try:
+        job_id = queue.submit(lambda: (release.wait(2), {"answer": "done"})[1])
+        assert queue.get(job_id)["status"] in {"pending", "running"}
+        release.set()
+        for _ in range(100):
+            job = queue.get(job_id)
+            if job["status"] == "completed":
+                break
+            sleep(0.01)
+        assert job["result"] == {"answer": "done"}
+    finally:
+        queue.close()
 
 
 def test_scope_banner_is_runtime_derived():

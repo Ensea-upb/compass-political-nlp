@@ -235,6 +235,17 @@ python apps/chat_web.py \
 
 `chat_web.py` est recommandé sur Onyxia. Ajouter `--debug-routing` uniquement pour examiner ou comparer le routeur LLM. Le prototype `chat_gradio.py` reste disponible mais peut rencontrer des incompatibilités avec les versions FastAPI/Starlette du runtime vLLM.
 
+### Requêtes longues derrière le proxy Onyxia
+
+L'interface web ne maintient pas une connexion HTTP pendant toute l'analyse.
+Elle soumet la question à `POST /ask`, reçoit un identifiant de tâche avec le
+statut HTTP `202`, puis interroge périodiquement
+`GET /result/<identifiant>`. Le traitement reste sérialisé dans le processus du
+chat afin d'éviter plusieurs chargements concurrents des modèles CPU et des
+appels vLLM. Cette couche de transport ne modifie ni le retrieval, ni le prompt,
+ni la validation scientifique ; elle empêche seulement le proxy de convertir
+une réponse lente en page HTML `Gateway Timeout`.
+
 ## Questions de vérification
 
 ```text

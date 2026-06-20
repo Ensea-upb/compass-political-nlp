@@ -118,6 +118,16 @@ python apps/chat_web.py \
 
 Ouvrir ensuite le port `41771` depuis l'interface Onyxia. Le chantier de chat mondial sans pays obligatoire est différé dans la roadmap.
 
+Le chat exécute les questions longues en arrière-plan. L'appel `POST /ask`
+retourne immédiatement un identifiant, puis l'interface interroge
+`GET /result/<identifiant>` jusqu'à la fin du pipeline. Ce fonctionnement évite
+qu'un proxy Onyxia interrompe la première question pendant le chargement CPU du
+cross-encoder ou du modèle NLI. Le bouton affiche `Analyse...` pendant ce temps.
+
+La première réponse reste généralement plus lente que les suivantes : les
+modèles de reranking et de validation sont chargés en mémoire à leur première
+utilisation.
+
 ## 9. Diagnostic rapide
 
 ```bash
@@ -129,4 +139,8 @@ python -m pytest tests/test_chat_engine.py tests/test_chat_web.py -q
 - `ModuleNotFoundError: vllm` : installer `requirements-onyxia.txt` dans l'environnement actif.
 - `CUDA out of memory` : utiliser le modèle 3B, réduire `gpu-memory-utilization` ou arrêter les autres processus GPU.
 - `400 Bad Request` : vérifier `max-model-len`, le nom du modèle et que le dépôt contient le budget de prompt compact.
+- `Gateway Timeout` avec une ancienne version du dépôt : faire `git pull`,
+  redémarrer `apps/chat_web.py` et vérifier que l'interface appelle
+  `./result/<identifiant>`. Le chat récent ne garde plus la requête `/ask`
+  ouverte pendant toute l'analyse.
 - fallback extractif : consulter la note technique et les logs du terminal vLLM.
