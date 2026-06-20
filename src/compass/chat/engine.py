@@ -8,6 +8,7 @@ reasoning, validation, or schemas.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -18,7 +19,6 @@ from compass.config import settings
 from compass.chat.query_analysis import (
     QueryAnalysis,
     analyze_question,
-    format_query_analysis,
 )
 from compass.chat.expert_retrieval import (
     RetrievalBundle,
@@ -251,7 +251,7 @@ class ChatEngine:
                 "\n\nAvertissement technique : les métadonnées sont absentes pour ce segment. "
                 "Vérifiez l'index ou réindexez le corpus."
             )
-        citations = build_citations(records)
+        citations = build_citations(records, enforce_minimum=False)
         if not citations:
             return ChatResponse(
                 answer="Je n'ai pas trouve ce segment exact dans l'index COMPASS.",
@@ -636,15 +636,55 @@ def query_evidence(
     )
 
 
-def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
+def build_citations(
+    retrieved: list[dict[str, Any]],
+    *,
+    enforce_minimum: bool = True,
+) -> list[Citation]:
+    child_parent_ids = {
+        str((item.get("meta") or {}).get("parent_segment_id") or "")
+        for item in retrieved
+        if (item.get("meta") or {}).get("parent_segment_id")
+    }
+    child_parent_fingerprints = {
+        _text_fingerprint(str(item.get("parent_text") or ""))
+        for item in retrieved
+        if item.get("parent_text")
+    }
     citations: list[Citation] = []
-    for idx, item in enumerate(retrieved, start=1):
+    seen_segments: set[str] = set()
+    seen_texts: set[str] = set()
+    for item in retrieved:
         meta = item.get("meta") or {}
+        segment_id = str(item.get("segment_id") or "")
+        text = str(item.get("text") or "").strip()
+        parent_text = str(item.get("parent_text") or "").strip()
+        text_fingerprint = _text_fingerprint(text)
+        parent_id = str(meta.get("parent_segment_id") or "")
+        if not segment_id or not text_fingerprint:
+            continue
+        if segment_id in seen_segments or text_fingerprint in seen_texts:
+            continue
+        if (
+            not parent_id
+            and (
+                segment_id in child_parent_ids
+                or text_fingerprint in child_parent_fingerprints
+            )
+        ):
+            continue
+        if enforce_minimum and (
+            _word_count(text) < settings.chat_min_citable_words
+            and _word_count(parent_text) < settings.chat_min_citable_words
+        ):
+            continue
+        seen_segments.add(segment_id)
+        seen_texts.add(text_fingerprint)
         citations.append(
             Citation(
-                ref_id=f"S{idx}",
-                segment_id=str(item.get("segment_id") or ""),
-                text=str(item.get("text") or ""),
+                ref_id=f"S{len(citations) + 1}",
+                segment_id=segment_id,
+                text=text,
                 doc_id=str(meta.get("doc_id") or ""),
                 country_iso3=str(meta.get("country_iso3") or ""),
                 party_id=_none_if_empty(meta.get("party_id")),
@@ -652,7 +692,7 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
                 doc_type=_none_if_empty(meta.get("doc_type")),
                 section_title=_none_if_empty(meta.get("section_title")),
                 reliability=_none_if_empty(meta.get("reliability")),
-                parent_text=_none_if_empty(item.get("parent_text")),
+                parent_text=_none_if_empty(parent_text),
                 retrieval_reason=_none_if_empty(item.get("retrieval_reason")),
                 evidence_role=str(item.get("evidence_role") or "primary"),
             )
@@ -842,12 +882,21 @@ def _format_document_dates(document_dates: list[str]) -> str:
 
 def build_general_context_items(records: list[dict[str, Any]], limit: int = 3) -> list[GeneralContext]:
     seen: set[str] = set()
+    seen_texts: set[str] = set()
     unique: list[dict[str, Any]] = []
     for item in records:
         segment_id = str(item.get("segment_id") or "")
-        if not segment_id or segment_id in seen:
+        text = str(item.get("parent_text") or item.get("text") or "")
+        fingerprint = _text_fingerprint(text)
+        if (
+            not segment_id
+            or not fingerprint
+            or segment_id in seen
+            or fingerprint in seen_texts
+        ):
             continue
         seen.add(segment_id)
+        seen_texts.add(fingerprint)
         unique.append(item)
 
     selected: list[dict[str, Any]] = []
@@ -867,6 +916,7 @@ def build_general_context_items(records: list[dict[str, Any]], limit: int = 3) -
             break
         if str(item.get("segment_id")) not in selected_ids:
             selected.append(item)
+            selected_ids.add(str(item.get("segment_id")))
 
     return [
         _general_context_from_record(item, index)
@@ -899,39 +949,34 @@ def build_messages(
     retrieval: RetrievalBundle | None = None,
 ) -> list[dict[str, str]]:
     prompt_citations = citations[:settings.chat_max_prompt_citations]
-    retrieval_trace_text = format_retrieval_trace(retrieval.trace if retrieval else [])
+    general_context = _exclude_evidence_from_general_context(
+        general_context or [], prompt_citations,
+    )
     budget = compute_prompt_budget(
         len(prompt_citations),
-        len(general_context or []),
+        len(general_context),
         len(graph_context or []),
-        extra_overhead_chars=max(0, len(retrieval_trace_text) - 100),
     )
     evidence_context = format_evidence_for_prompt(prompt_citations, budget)
     general_context_text = format_general_context_for_prompt(
-        general_context or [], max_chars=budget.general_chars,
+        general_context, max_chars=budget.general_chars,
     )
     relational_context_text = format_graph_context_for_prompt(
         graph_context or [], max_chars=budget.graph_chars,
     )
     analytical_context_text = build_analytical_context(question)
-    question_analysis_text = (
-        format_query_analysis(question_analysis)
-        if question_analysis is not None
-        else "not available"
-    )
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
         "Your task is evidence-grounded analysis, not open-ended political commentary. "
         "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
-        "QUESTION_ANALYSIS is a retrieval plan, not factual evidence, and must never be cited. "
-        "RETRIEVAL_TRACE explains selection steps and scores; it is not evidence and must never be cited. "
         "There are four evidence-framing inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, RELATIONAL_CONTEXT, and CITED_EVIDENCE. "
         "ANALYTICAL_CONTEXT gives a political-science reading frame; it is not factual evidence and must never be cited. "
         "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
         "RELATIONAL_CONTEXT contains inferred entity co-occurrences from the political graph. It is not verified fact, "
         "must never be cited, and must be ignored when it conflicts with CITED_EVIDENCE. "
         "CITED_EVIDENCE contains PRIMARY_EVIDENCE, NUANCE_EVIDENCE, and COUNTER_EVIDENCE_CANDIDATES. "
+        "Each [S] source refers to both its evidence segment and the local_parent_context supplied with it. "
         "All are citable passages, but a counter-evidence candidate must be described as contradictory only when its text actually conflicts. "
         "Every substantive political claim must end with an inline citation like [S1] or [S2]. "
         "Never cite [A], [C1], [C2], [R1], or any analytical/general/relational-context label. "
@@ -956,10 +1001,6 @@ def build_messages(
     user = (
         f"Scope: {scope}\n\n"
         f"Question: {question}\n\n"
-        "QUESTION_ANALYSIS - retrieval plan only, never cite this block:\n"
-        f"{question_analysis_text}\n\n"
-        "RETRIEVAL_TRACE - selection audit only, never cite this block:\n"
-        f"{retrieval_trace_text}\n\n"
         "ANALYTICAL_CONTEXT - conceptual reading frame, never cite this block:\n"
         f"{analytical_context_text}\n\n"
         "GENERAL_CONTEXT - background only, never cite this block:\n"
@@ -971,6 +1012,7 @@ def build_messages(
         "Answer contract:\n"
         "- Start with a direct answer, then organize the supporting points clearly.\n"
         "- Use [S1], [S2], etc. for every claim.\n"
+        "- An [S] source covers its evidence segment and its supplied local_parent_context.\n"
         "- Never invent source ids. Use only the [S] ids present above.\n"
         "- Use ANALYTICAL_CONTEXT only to understand the political concept being asked about.\n"
         "- Label direct declarations as explicit and multi-source interpretations as cautious synthesis.\n"
@@ -979,11 +1021,66 @@ def build_messages(
         "- If evidence is weak or absent, say so explicitly."
     )
     history = compact_history(
-        request.history,
+        _previous_history_only(request.history, question),
         max_messages=_MAX_CHAT_HISTORY_MESSAGES,
         max_chars=_MAX_CHAT_HISTORY_CHARS,
     )
     return [{"role": "system", "content": system}, *history, {"role": "user", "content": user}]
+
+
+def _exclude_evidence_from_general_context(
+    general_context: list[GeneralContext],
+    citations: list[Citation],
+) -> list[GeneralContext]:
+    evidence_ids = {citation.segment_id for citation in citations}
+    evidence_texts = {
+        fingerprint
+        for citation in citations
+        for fingerprint in (
+            _text_fingerprint(citation.text),
+            _text_fingerprint(citation.parent_text or ""),
+        )
+        if fingerprint
+    }
+    selected: list[GeneralContext] = []
+    seen_texts: set[str] = set()
+    for item in general_context:
+        fingerprint = _text_fingerprint(item.text)
+        if (
+            not fingerprint
+            or item.segment_id in evidence_ids
+            or fingerprint in evidence_texts
+            or fingerprint in seen_texts
+        ):
+            continue
+        seen_texts.add(fingerprint)
+        selected.append(GeneralContext(
+            ref_id=f"C{len(selected) + 1}",
+            segment_id=item.segment_id,
+            text=item.text,
+            country_iso3=item.country_iso3,
+            party_id=item.party_id,
+            doc_date=item.doc_date,
+            doc_type=item.doc_type,
+            section_title=item.section_title,
+        ))
+    return selected
+
+
+def _previous_history_only(
+    history: list[dict[str, str]],
+    current_question: str,
+) -> list[dict[str, str]]:
+    if not history:
+        return []
+    last = history[-1]
+    if (
+        str(last.get("role") or "").lower() == "user"
+        and " ".join(str(last.get("content") or "").split()).casefold()
+        == " ".join(current_question.split()).casefold()
+    ):
+        return history[:-1]
+    return history
 
 
 def attach_parent_context(memory: Any, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1816,6 +1913,17 @@ def _excerpt(text: str, max_chars: int = 220) -> str:
     if len(clean) <= max_chars:
         return clean
     return clean[: max_chars - 3].rstrip() + "..."
+
+
+def _text_fingerprint(text: str) -> str:
+    normalized = " ".join(str(text or "").casefold().split())
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"[^\W_]+", str(text or ""), flags=re.UNICODE))
 
 
 def _default_chat_model() -> str:

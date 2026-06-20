@@ -173,7 +173,11 @@ def test_chat_engine_distinguishes_retrieval_and_prompt_evidence_budgets(monkeyp
         def query_documents(self, question, as_of, k=12, party_id=None, include_unverified=False):
             base = super().query_documents(question, as_of, k, party_id, include_unverified)[0]
             return [
-                {**base, "segment_id": f"doc1:p{index:03d}c000", "text": f"Proof {index}."}
+                {
+                    **base,
+                    "segment_id": f"doc1:p{index:03d}c000",
+                    "text": f"Substantive political evidence passage number {index} supports democracy.",
+                }
                 for index in range(8)
             ]
 
@@ -218,7 +222,8 @@ def test_chat_engine_uses_structured_llm_subqueries(monkeypatch):
                 '"subqueries":["constitutional reform institutions",'
                 '"constitutional change commitments evidence"]}'
             )
-        assert "QUESTION_ANALYSIS" in messages[-1]["content"]
+        assert "QUESTION_ANALYSIS" not in messages[-1]["content"]
+        assert "RETRIEVAL_TRACE" not in messages[-1]["content"]
         return "The party supports democratic accountability [S1]."
 
     memory = QueryMemory()
@@ -515,6 +520,113 @@ def test_chat_prompt_requires_evidence_linked_claims():
     assert "Answer contract" in messages[-1]["content"]
 
 
+def test_generation_prompt_excludes_retrieval_telemetry():
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+    messages = build_messages(
+        "What about democracy?",
+        citations,
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27)),
+        retrieval=chat_engine.RetrievalBundle(trace=[{
+            "stage": "query",
+            "lane": "primary",
+            "query": "democracy",
+        }]),
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "QUESTION_ANALYSIS" not in prompt
+    assert "RETRIEVAL_TRACE" not in prompt
+
+
+def test_build_citations_deduplicates_text_and_parent_records():
+    parent_text = "This parent passage provides substantial democratic policy context."
+    child_text = "The party explicitly supports democratic participation and accountability."
+    citations = build_citations([
+        {
+            "segment_id": "doc:p001c001",
+            "text": child_text,
+            "parent_text": parent_text,
+            "meta": {"parent_segment_id": "doc:p001"},
+            "evidence_role": "primary",
+        },
+        {
+            "segment_id": "duplicate:p001c001",
+            "text": "  THE PARTY explicitly supports democratic participation and accountability. ",
+            "parent_text": parent_text,
+            "meta": {"parent_segment_id": "doc:p001"},
+            "evidence_role": "nuance",
+        },
+        {
+            "segment_id": "doc:p001",
+            "text": parent_text,
+            "meta": {},
+            "evidence_role": "counter",
+        },
+    ])
+
+    assert len(citations) == 1
+    assert citations[0].segment_id == "doc:p001c001"
+
+
+def test_short_fragment_without_parent_is_not_citable():
+    citations = build_citations([
+        {"segment_id": "doc:p001c001", "text": "Protecting citizens' rights.", "meta": {}},
+        {
+            "segment_id": "doc:p002c001",
+            "text": "Direct democracy.",
+            "parent_text": "The party supports referendums and stronger democratic citizen participation.",
+            "meta": {"parent_segment_id": "doc:p002"},
+        },
+    ])
+
+    assert [citation.segment_id for citation in citations] == ["doc:p002c001"]
+
+
+def test_general_context_does_not_repeat_cited_parent_or_text():
+    parent_text = "The manifesto presents a broad and substantive democratic orientation."
+    citations = build_citations([{
+        "segment_id": "doc:p001c001",
+        "text": "The party supports accountable democratic institutions and participation.",
+        "parent_text": parent_text,
+        "meta": {"parent_segment_id": "doc:p001"},
+    }])
+    general = build_general_context_items([
+        {"segment_id": "doc:p001", "text": parent_text, "meta": {}},
+        {"segment_id": "duplicate:p001", "text": parent_text.upper(), "meta": {}},
+    ])
+    messages = build_messages(
+        "What about democracy?",
+        citations,
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27)),
+        general,
+    )
+    prompt = messages[-1]["content"]
+
+    assert prompt.casefold().count(parent_text.casefold()) == 1
+    assert "segment=doc:p001" not in prompt
+    assert "No separate general context retrieved." in prompt
+
+
+def test_current_question_is_removed_from_history_before_prompting():
+    question = "What does the party say about democracy?"
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+    messages = build_messages(
+        question,
+        citations,
+        ChatRequest(
+            question=question,
+            as_of=date(2009, 9, 27),
+            history=[
+                {"role": "assistant", "content": "Previous answer [S1]."},
+                {"role": "user", "content": question},
+            ],
+        ),
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert prompt.count(question) == 1
+
+
 def test_strip_appended_sources_removes_model_bibliography():
     answer = "Analysis [S1].\n\nSources\n- [S1] duplicated"
 
@@ -542,7 +654,7 @@ def test_semantic_grounding_accepts_jointly_supported_synthesis(monkeypatch):
     records.append({
         **records[0],
         "segment_id": "doc1:p001c000",
-        "text": "The party supports transparent elections.",
+        "text": "The party explicitly supports transparent and democratic elections.",
     })
     citations = build_citations(records)
 
@@ -641,6 +753,7 @@ def test_prompt_separates_primary_nuance_and_counter_evidence():
         records.append({
             **record,
             "segment_id": f"doc1:p00{index}c000",
+            "text": f"The {role} passage provides distinct substantive evidence about democracy.",
             "evidence_role": role,
         })
     citations = build_citations(records)
@@ -850,8 +963,8 @@ def test_chat_prompt_is_bounded_for_small_vllm_contexts():
         [
             {
                 "segment_id": f"doc1:p{i:03d}c000",
-                "text": "Evidence text " + ("x" * 1200),
-                "parent_text": "Parent context " + ("y" * 1200),
+                "text": f"Evidence passage {i} provides substantive political support " + ("x" * 1200),
+                "parent_text": f"Parent context {i} provides broader manifesto meaning " + ("y" * 1200),
                 "meta": {
                     "doc_id": "doc1",
                     "country_iso3": "DEU",
@@ -868,7 +981,7 @@ def test_chat_prompt_is_bounded_for_small_vllm_contexts():
         [
             {
                 "segment_id": f"doc1:p{i:03d}",
-                "text": "General context " + ("z" * 1500),
+                "text": f"General context {i} presents a distinct manifesto orientation " + ("z" * 1500),
                 "meta": {
                     "country_iso3": "DEU",
                     "party_id": "41320",

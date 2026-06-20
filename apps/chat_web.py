@@ -196,7 +196,6 @@ HTML = """<!doctype html>
       const text = question.value.trim();
       if (!text) return;
       addMessage('user', text);
-      history.push({role: 'user', content: text});
       question.value = '';
       send.disabled = true;
       send.textContent = 'Analyse...';
@@ -225,6 +224,7 @@ HTML = """<!doctype html>
         if (payload.sources && payload.sources.length) {
           lastSources = payload.sources;
         }
+        history.push({role: 'user', content: text});
         history.push({role: 'assistant', content: payload.answer});
       } catch (err) {
         addMessage('assistant', 'Erreur COMPASS Chat: ' + err.message, 'error');
@@ -303,7 +303,7 @@ def main() -> None:
         ChatRequest(question="scope", as_of=cutoff, party_id=args.party),
     )
     scope = format_scope_banner(scope_data, cutoff, election_id=args.election_id)
-    prompt_store: dict[str, list[dict[str, str]]] = {}
+    prompt_store: dict[str, dict[str, Any]] = {}
     job_queue = ChatJobQueue(max_workers=1)
 
     class Handler(BaseHTTPRequestHandler):
@@ -370,11 +370,11 @@ def main() -> None:
             self.wfile.write(data)
 
         def _send_prompt_page(self, prompt_id: str) -> None:
-            messages = prompt_store.get(prompt_id)
-            if messages is None:
+            inspection = prompt_store.get(prompt_id)
+            if inspection is None:
                 self._send_json({"error": "prompt not found"}, status=404)
                 return
-            page = render_prompt_page(messages)
+            page = render_prompt_page(inspection)
             data = page.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -438,7 +438,7 @@ def answer_question_payload(
     party_id: str | None,
     election_id: str | None = None,
     k: int,
-    prompt_store: dict[str, list[dict[str, str]]] | None = None,
+    prompt_store: dict[str, dict[str, Any]] | None = None,
     routing_mode: str = "deterministic",
     previous_citations: list[dict] | None = None,
 ) -> dict[str, object]:
@@ -482,7 +482,12 @@ def answer_question_payload(
     }
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex
-        prompt_store[prompt_id] = response.prompt_messages
+        prompt_store[prompt_id] = {
+            "messages": response.prompt_messages,
+            "query_analysis": getattr(response, "query_analysis", {}),
+            "retrieval_trace": getattr(response, "retrieval_trace", []),
+            "validation_trace": getattr(response, "validation_trace", []),
+        }
         payload["prompt_url"] = f"./prompt/{prompt_id}"
     return payload
 
@@ -515,8 +520,17 @@ def format_scope_banner(
     )
 
 
-def render_prompt_page(messages: list[dict[str, str]]) -> str:
+def render_prompt_page(
+    inspection: list[dict[str, str]] | dict[str, Any],
+) -> str:
+    if isinstance(inspection, list):
+        messages = inspection
+        audit: dict[str, Any] = {}
+    else:
+        messages = list(inspection.get("messages") or [])
+        audit = inspection
     cards = "\n".join(_render_prompt_message(message) for message in messages)
+    audit_cards = _render_audit_cards(audit)
     raw = html.escape(json.dumps(messages, ensure_ascii=False, indent=2))
     return f"""<!doctype html>
 <html lang="fr">
@@ -537,6 +551,7 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
     .system .role {{ background: #2b3340; }}
     .user .role {{ background: #233754; }}
     .assistant .role {{ background: #2b3b32; }}
+    .audit .role {{ background: #493d24; color: #fff0c2; }}
     mark {{ background: #384d7a; color: #ffffff; padding: 0 3px; border-radius: 3px; }}
     details {{ margin-top: 22px; border: 1px solid #30343a; border-radius: 8px; background: #17191d; }}
     summary {{ cursor: pointer; padding: 12px 14px; font-weight: 700; }}
@@ -547,9 +562,10 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
   <main>
     <header>
       <h1>Prompt envoye au LLM</h1>
-      <p class="hint">Lecture humaine du prompt réellement transmis à vLLM. <code>RETRIEVAL_TRACE</code> expose les étapes de sélection. <code>ANALYTICAL_CONTEXT</code>, <code>GENERAL_CONTEXT</code> et <code>RELATIONAL_CONTEXT</code> orientent la lecture ; seules les sources <code>[Sx]</code> des blocs de preuves peuvent justifier les affirmations.</p>
+      <p class="hint">Les cartes SYSTEM, USER et ASSISTANT reproduisent les messages réellement transmis à vLLM. La section AUDIT est affichée pour la traçabilité, mais elle n'est pas envoyée au modèle. Seules les sources <code>[Sx]</code> peuvent justifier les affirmations.</p>
     </header>
     {cards}
+    {audit_cards}
     <details>
       <summary>Voir le JSON exact envoye</summary>
       <pre>{raw}</pre>
@@ -557,6 +573,28 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
   </main>
 </body>
 </html>"""
+
+
+def _render_audit_cards(audit: dict[str, Any]) -> str:
+    sections = []
+    values = (
+        ("QUESTION_ANALYSIS", audit.get("query_analysis")),
+        ("RETRIEVAL_TRACE", audit.get("retrieval_trace")),
+        ("VALIDATION_TRACE", audit.get("validation_trace")),
+    )
+    for title, value in values:
+        if not value:
+            continue
+        content = html.escape(json.dumps(value, ensure_ascii=False, indent=2))
+        sections.append(
+            "<section class='message audit'>"
+            f"<div class='role'><span>{title}</span><span>audit non envoyé</span></div>"
+            f"<div class='content'>{content}</div>"
+            "</section>"
+        )
+    if not sections:
+        return ""
+    return "<h2>Audit hors prompt LLM</h2>" + "\n".join(sections)
 
 
 def _render_prompt_message(message: dict[str, str]) -> str:

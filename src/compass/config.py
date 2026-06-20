@@ -142,6 +142,7 @@ class CompassSettings(LLMConfig):
     # --- Chat RAG : budgets de preuve et garde-fou sémantique optionnel ---
     chat_max_prompt_citations: int = 4
     chat_max_evidence_text_chars: int = 700
+    chat_min_citable_words: int = Field(default=6, ge=1, le=50)
     chat_max_parent_context_chars: int = 420
     chat_general_context_items: int = 3
     chat_max_general_context_chars: int = 650

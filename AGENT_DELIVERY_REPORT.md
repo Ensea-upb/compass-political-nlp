@@ -1,7 +1,7 @@
 # Rapport de livraison Codex — audit COMPASS Chat
 
 Date : 20 juin 2026
-Référence auditée : branche de travail après `2b56fd1`
+Référence auditée : base `2ca083a`, complétée par l'assainissement du prompt
 Statut : **GO_WITH_WARNINGS**
 
 ## Résultat
@@ -103,11 +103,26 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - `/contamination <variable_id>` expose explicitement la sonde C15 sans influencer le raisonnement de production ;
 - le service est initialisé paresseusement : les modèles scientifiques lourds ne sont chargés qu'à la première analyse.
 
+## Assainissement du prompt de génération
+
+- `QUESTION_ANALYSIS` et `RETRIEVAL_TRACE` ne sont plus transmis au LLM de génération ;
+- la page d'inspection les présente dans une section `Audit hors prompt LLM`, clairement séparée du JSON exact envoyé à vLLM ;
+- le budget ainsi libéré revient aux preuves citables et à leur contexte parent, avec une limite configurable déjà fixée à `700` caractères par preuve ;
+- les preuves sont dédupliquées par identifiant et par empreinte SHA-256 du texte normalisé ;
+- un parent récupéré comme candidat séparé est écarté lorsqu'un enfant citable transporte déjà ce parent dans `local_parent_context` ;
+- le contexte général exclut les identifiants et textes déjà présents dans les preuves ou leurs contextes parents ;
+- les fragments de moins de `settings.chat_min_citable_words` mots sont écartés, sauf lorsqu'ils possèdent un contexte parent substantiel ;
+- le contrat précise qu'une source `[Sx]` couvre le segment et le contexte parent fourni ;
+- le lookup exact par `segment_id` reste intégral et n'applique pas ce seuil destiné à la génération ;
+- l'historique envoyé au serveur contient uniquement les tours précédents ; une protection serveur retire aussi le tour courant lorsqu'un autre client le duplique.
+
+Les politiques de validation syntaxique et NLI, le retrieval expert et le pipeline scientifique n'ont pas été modifiés.
+
 ## Vérifications exécutées
 
 ```text
 python -m pytest -q
-152 passed
+158 passed
 
 ruff check src apps tests examples scripts
 All checks passed!
@@ -128,6 +143,7 @@ Une recherche explicite dans `src/` et `apps/` a également vérifié l'absence 
 3. La démonstration États-Unis nécessite toujours l'ingestion réelle d'un corpus USA sur Onyxia. Elle n'est pas vérifiable depuis cet environnement sans accès à l'API Manifesto et aux données persistées.
 4. `chat_gradio.py` reste un prototype optionnel. L'interface recommandée est `chat_web.py`.
 5. L'extraction du graphe exige un modèle NER spaCy installé. Sans modèle, l'ingestion documentaire continue mais le graphe reste vide et un avertissement est journalisé.
+6. Les scores cross-encoder quasi nuls observés sur le corpus de démonstration relèvent du reranking dans `country_memory.py`. Ce diagnostic reste hors du périmètre de l'assainissement du prompt et doit être traité séparément.
 
 ## Verdict
 

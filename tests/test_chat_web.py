@@ -77,6 +77,7 @@ def test_chat_web_payload_adds_prompt_link():
 
     assert payload["prompt_url"].startswith("./prompt/")
     assert store
+    assert next(iter(store.values()))["messages"] == [{"role": "user", "content": "prompt"}]
     assert "\n\nSources\n" not in payload["answer"]
     assert payload["route"] == "evidence_query"
     assert payload["retrieval_count"] == 8
@@ -133,10 +134,14 @@ def test_chat_web_forwards_structured_previous_sources():
 
 
 def test_chat_web_prompt_page_is_human_readable():
-    page = render_prompt_page([
-        {"role": "system", "content": "Do not use outside knowledge."},
-        {"role": "user", "content": "ANALYTICAL_CONTEXT\nframe\n\nGENERAL_CONTEXT\ncontext\n\nRELATIONAL_CONTEXT\n[R1] inferred\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
-    ])
+    page = render_prompt_page({
+        "messages": [
+            {"role": "system", "content": "Do not use outside knowledge."},
+            {"role": "user", "content": "ANALYTICAL_CONTEXT\nframe\n\nGENERAL_CONTEXT\ncontext\n\nRELATIONAL_CONTEXT\n[R1] inferred\n\nCITED_EVIDENCE\n[S1] proof\n\nAnswer contract"},
+        ],
+        "query_analysis": {"answer_type": "position"},
+        "retrieval_trace": [{"stage": "query", "retrieved": 8}],
+    })
 
     assert "Prompt envoye au LLM" in page
     assert "<mark>ANALYTICAL_CONTEXT</mark>" in page
@@ -144,6 +149,10 @@ def test_chat_web_prompt_page_is_human_readable():
     assert "<mark>RELATIONAL_CONTEXT</mark>" in page
     assert "<mark>CITED_EVIDENCE</mark>" in page
     assert "Voir le JSON exact envoye" in page
+    assert "Audit hors prompt LLM" in page
+    assert "QUESTION_ANALYSIS" in page
+    assert "RETRIEVAL_TRACE" in page
+    assert "audit non envoyé" in page
 
 def test_chat_web_uses_relative_ask_endpoint():
     from apps.chat_web import HTML
@@ -163,6 +172,8 @@ def test_chat_web_uses_relative_ask_endpoint():
     assert "last_sources" in HTML
     assert "sources_markdown" in HTML
     assert "data-question" in HTML
+    assert HTML.count("history.push({role: 'user', content: text})") == 1
+    assert HTML.index("fetch('./ask'") < HTML.index("history.push({role: 'user', content: text})")
 
 
 def test_chat_job_queue_returns_long_running_result_without_blocking_submit():
