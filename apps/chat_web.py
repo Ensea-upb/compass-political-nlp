@@ -90,6 +90,8 @@ HTML = """<!doctype html>
       <button type="button" data-question="Que dit le parti sur la démocratie ?">Démocratie</button>
       <button type="button" data-question="Quelles priorités économiques apparaissent dans le manifeste ?">Économie</button>
       <button type="button" data-question="Tu es connecté à quel corpus ?">Corpus actif</button>
+      <button type="button" data-question="/variables">Variables scientifiques</button>
+      <button type="button" data-question="/valider">Valider la session</button>
     </div>
     <section id="chat" aria-live="polite">
       <div class="msg assistant">Bonjour. Pose une question sur le corpus indexe, par exemple: What does the party say about democracy?</div>
@@ -211,6 +213,7 @@ def main() -> None:
     parser.add_argument("--country", required=True, help="Three-letter country ISO3 code")
     parser.add_argument("--as-of", required=True, help="Temporal cutoff date, YYYY-MM-DD")
     parser.add_argument("--party", help="Optional party id filter")
+    parser.add_argument("--election-id", help="Election id for scientific /analyse commands")
     parser.add_argument("--k", type=int, default=8, help="Number of evidence segments to retrieve")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
@@ -222,17 +225,20 @@ def main() -> None:
     args = parser.parse_args()
 
     from compass.country_memory import CountryMemory
+    from compass.chat.scientific_service import ScientificChatService
     from compass.political_graph import PoliticalGraph
 
     cutoff = date.fromisoformat(args.as_of)
     graph = PoliticalGraph(args.country)
     graph.load()
-    engine = ChatEngine(CountryMemory(args.country), graph=graph)
+    memory = CountryMemory(args.country)
+    scientific_service = ScientificChatService(memory, graph)
+    engine = ChatEngine(memory, graph=graph, scientific_service=scientific_service)
     scope_data = describe_active_corpus(
         engine.memory,
         ChatRequest(question="scope", as_of=cutoff, party_id=args.party),
     )
-    scope = format_scope_banner(scope_data, cutoff)
+    scope = format_scope_banner(scope_data, cutoff, election_id=args.election_id)
     prompt_store: dict[str, list[dict[str, str]]] = {}
 
     class Handler(BaseHTTPRequestHandler):
@@ -272,6 +278,7 @@ def main() -> None:
                     history=history,
                     cutoff=cutoff,
                     party_id=args.party,
+                    election_id=args.election_id,
                     k=args.k,
                     prompt_store=prompt_store,
                     routing_mode=routing_mode,
@@ -318,6 +325,7 @@ def answer_question(
     history: list[dict[str, str]],
     cutoff: date,
     party_id: str | None,
+    election_id: str | None = None,
     k: int,
     routing_mode: str = "deterministic",
     previous_citations: list[dict] | None = None,
@@ -328,6 +336,7 @@ def answer_question(
         history=history,
         cutoff=cutoff,
         party_id=party_id,
+        election_id=election_id,
         k=k,
         routing_mode=routing_mode,
         previous_citations=previous_citations,
@@ -341,6 +350,7 @@ def answer_question_payload(
     history: list[dict[str, str]],
     cutoff: date,
     party_id: str | None,
+    election_id: str | None = None,
     k: int,
     prompt_store: dict[str, list[dict[str, str]]] | None = None,
     routing_mode: str = "deterministic",
@@ -348,7 +358,10 @@ def answer_question_payload(
 ) -> dict[str, object]:
     if is_greeting(question):
         return {
-            "answer": "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé.",
+            "answer": (
+                "Bonjour. Je suis COMPASS Chat. Pose une question sur le corpus indexé, "
+                "ou utilise /variables puis /analyse <variable_id> pour le pipeline scientifique."
+            ),
             "route": "greeting",
             "sources": [],
             "sources_markdown": "",
@@ -361,6 +374,7 @@ def answer_question_payload(
             question=question,
             as_of=cutoff,
             party_id=party_id,
+            election_id=election_id,
             k=k,
             history=history,
             routing_mode=routing_mode,
@@ -390,7 +404,11 @@ def is_greeting(message: str) -> bool:
     return len(text) <= 40 and any(text == item or text.startswith(item + " ") or text.startswith(item + ",") for item in greetings)
 
 
-def format_scope_banner(scope: dict[str, object], cutoff: date) -> str:
+def format_scope_banner(
+    scope: dict[str, object],
+    cutoff: date,
+    election_id: str | None = None,
+) -> str:
     parties = []
     for item in scope.get("parties") or []:
         if isinstance(item, dict):
@@ -402,7 +420,9 @@ def format_scope_banner(scope: dict[str, object], cutoff: date) -> str:
     return (
         f"Corpus actif : {scope.get('country_iso3') or 'non renseigné'} | "
         f"partis={party_text} | documents={scope.get('n_documents', 0)} | "
-        f"types={doc_types} | as_of={cutoff.isoformat()} | mode=RAG evidence-grounded"
+        f"types={doc_types} | as_of={cutoff.isoformat()} | "
+        f"election_id={election_id or 'non renseigné'} | "
+        "mode=RAG + pipeline scientifique"
     )
 
 

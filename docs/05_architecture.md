@@ -53,7 +53,7 @@ Le document est découpé en parents contextuels et enfants citables. Le chat re
 
 ## Chat
 
-Le chat route d'abord la requête : lookup direct, question sur le périmètre du corpus ou question politique. Le routage peut être déterministe ou confié au LLM avec repli automatique. La politique de validation dépend ensuite de la route.
+Le chat est la façade des deux usages. Les questions documentaires utilisent le RAG hybride. Les commandes `/analyse <variable_id>` délèguent au même `CompassRunner` que le pipeline de recherche : registre, suffisance, recherche active, diagnostic, raisonnement, juges, agrégation, sortie et traçabilité. La validation externe C14 reste une commande séparée afin d'isoler physiquement l'étalon.
 
 ## État du corpus mondial
 

@@ -12,6 +12,7 @@
 - chat avec citations `[Sx]`, contexte analytique, inspection du prompt et fallback extractif ;
 - routage déterministe ou LLM sélectionnable depuis l'interface ;
 - politique `AnswerValidator` dépendante de la route ;
+- façade scientifique du chat vers `CompassRunner`, validation C14 et sonde C15 ;
 - tests unitaires, tests d'intégration et smoke test de l'architecture réelle.
 
 ## Chantier différé : corpus Manifesto mondial et chat sans contamination

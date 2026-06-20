@@ -18,6 +18,18 @@ from compass.config import settings
 from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
+_SCIENTIFIC_ANALYSIS_RE = re.compile(
+    r"^\s*/?(?:analyse|analyze|coder|score)\s+([A-Za-z0-9_.-]+)",
+    flags=re.IGNORECASE,
+)
+_SCIENTIFIC_VALIDATION_RE = re.compile(
+    r"^\s*/?(?:valider|validate)(?:\s+([A-Za-z0-9_.-]+))?\s*$",
+    flags=re.IGNORECASE,
+)
+_SCIENTIFIC_CONTAMINATION_RE = re.compile(
+    r"^\s*/?(?:contamination|probe-contamination)\s+([A-Za-z0-9_.-]+)\s*$",
+    flags=re.IGNORECASE,
+)
 _MAX_GENERAL_CONTEXT_ITEMS = 1
 _MAX_RELATIONAL_CONTEXT_ITEMS = 6
 _MAX_PARENT_CONTEXT_CHARS = 90
@@ -46,6 +58,10 @@ _ROUTE_VALIDATION_POLICIES = {
     "OUT_OF_CORPUS": "none",
     "COMPARISON_NEEDS_MORE_CORPUS": "none",
     "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA": "none",
+    "SCIENTIFIC_ANALYSIS": "none",
+    "SCIENTIFIC_VALIDATION": "none",
+    "SCIENTIFIC_VARIABLES": "none",
+    "SCIENTIFIC_CONTAMINATION": "none",
 }
 _ROUTING_MODES = {"deterministic", "llm"}
 
@@ -111,6 +127,7 @@ class ChatRequest:
     question: str
     as_of: date
     party_id: str | None = None
+    election_id: str | None = None
     k: int = 8
     include_unverified: bool = False
     history: list[dict[str, str]] = field(default_factory=list)
@@ -176,10 +193,12 @@ class ChatEngine:
         memory: Any,
         model_name: str | None = None,
         graph: Any | None = None,
+        scientific_service: Any | None = None,
     ) -> None:
         self.memory = memory
         self.model_name = model_name or _default_chat_model()
         self.graph = graph
+        self.scientific_service = scientific_service
 
     def _answer_segment_lookup(self, question: str, segment_ids: list[str]) -> ChatResponse:
         metadata_warning = ""
@@ -295,6 +314,125 @@ class ChatEngine:
             prompt_citation_count=len(citations),
         )
 
+    def _answer_scientific_analysis(
+        self,
+        request: ChatRequest,
+        scope: dict[str, Any],
+    ) -> ChatResponse:
+        variable_id = extract_scientific_variable(request.question)
+        if self.scientific_service is None:
+            return _scientific_unavailable_response(
+                "Le service scientifique n'est pas configuré pour cette interface.",
+                route="SCIENTIFIC_ANALYSIS",
+            )
+        if not variable_id:
+            return _scientific_unavailable_response(
+                "Précisez une variable : /analyse <variable_id>.",
+                route="SCIENTIFIC_ANALYSIS",
+            )
+        try:
+            result = self.scientific_service.analyze(
+                variable_id,
+                country_iso3=str(scope.get("country_iso3") or getattr(self.memory, "country", "")),
+                party_id=request.party_id,
+                election_id=request.election_id,
+                as_of=request.as_of,
+            )
+        except Exception as exc:
+            return _scientific_unavailable_response(
+                f"Analyse scientifique indisponible : {exc}",
+                route="SCIENTIFIC_ANALYSIS",
+            )
+        citations = citations_from_final_answer(result)
+        return ChatResponse(
+            answer=format_scientific_answer(
+                result,
+                citations,
+                trace_path=getattr(self.scientific_service, "last_trace_path", None),
+            ),
+            citations=citations,
+            model_used=None,
+            llm_used=bool(getattr(result, "inferred", [])),
+            retrieval_count=len(result.main_evidence) + len(result.counter_evidence),
+            graph_context=list(getattr(result, "graph_context", []) or []),
+            route="SCIENTIFIC_ANALYSIS",
+            prompt_citation_count=len(citations),
+        )
+
+    def _answer_scientific_validation(self, request: ChatRequest) -> ChatResponse:
+        if self.scientific_service is None:
+            return _scientific_unavailable_response(
+                "Le service scientifique n'est pas configuré pour cette interface.",
+                route="SCIENTIFIC_VALIDATION",
+            )
+        variable_id = extract_scientific_variable(request.question)
+        try:
+            report = self.scientific_service.validate_cached(variable_id)
+            answer = format_validation_report(report)
+        except Exception as exc:
+            answer = f"Validation scientifique indisponible : {exc}"
+        return ChatResponse(
+            answer=answer,
+            citations=[],
+            model_used=None,
+            llm_used=False,
+            retrieval_count=0,
+            route="SCIENTIFIC_VALIDATION",
+        )
+
+    def _answer_scientific_variables(self) -> ChatResponse:
+        if self.scientific_service is None:
+            variables: list[str] = []
+        else:
+            try:
+                variables = self.scientific_service.available_variables()
+            except Exception:
+                variables = []
+        answer = (
+            "Variables scientifiques disponibles :\n\n- " + "\n- ".join(variables)
+            if variables
+            else "Aucune variable scientifique n'est disponible dans le registre actif."
+        )
+        return ChatResponse(
+            answer=answer,
+            citations=[],
+            model_used=None,
+            llm_used=False,
+            retrieval_count=0,
+            route="SCIENTIFIC_VARIABLES",
+        )
+
+    def _answer_scientific_contamination(self, request: ChatRequest) -> ChatResponse:
+        variable_id = extract_scientific_variable(request.question)
+        if self.scientific_service is None or not variable_id:
+            return _scientific_unavailable_response(
+                "Commande attendue : /contamination <variable_id>.",
+                route="SCIENTIFIC_CONTAMINATION",
+            )
+        try:
+            results = self.scientific_service.contamination_check(
+                variable_id,
+                party_id=request.party_id,
+                election_year=request.as_of.year,
+            )
+            lines = ["Sonde de contamination C15", ""]
+            for result in results:
+                lines.append(
+                    f"- {result['model']} : claims_knowledge={result['claims_knowledge']} "
+                    f"| réponse brute={result['raw']}"
+                )
+            answer = "\n".join(lines)
+        except Exception as exc:
+            answer = f"Sonde de contamination indisponible : {exc}"
+        return ChatResponse(
+            answer=answer,
+            citations=[],
+            model_used=None,
+            llm_used=True,
+            retrieval_count=0,
+            route="SCIENTIFIC_CONTAMINATION",
+        )
+
     def ask(self, request: ChatRequest) -> ChatResponse:
         """Answer a question using existing indexed COMPASS documents."""
         question = request.question.strip()
@@ -314,6 +452,14 @@ class ChatEngine:
             return self._answer_corpus_scope(request, scope)
         if route == "FOLLOW_UP_SOURCES":
             return self._answer_follow_up_sources(request)
+        if route == "SCIENTIFIC_ANALYSIS":
+            return self._answer_scientific_analysis(request, scope)
+        if route == "SCIENTIFIC_VALIDATION":
+            return self._answer_scientific_validation(request)
+        if route == "SCIENTIFIC_VARIABLES":
+            return self._answer_scientific_variables()
+        if route == "SCIENTIFIC_CONTAMINATION":
+            return self._answer_scientific_contamination(request)
         if route in {
             "OUT_OF_CORPUS",
             "COMPARISON_NEEDS_MORE_CORPUS",
@@ -477,6 +623,89 @@ def citations_from_payload(items: list[dict[str, Any]]) -> list[Citation]:
         except (AttributeError, TypeError, ValueError):
             continue
     return citations
+
+
+def citations_from_final_answer(answer: Any) -> list[Citation]:
+    citations: list[Citation] = []
+    seen: set[str] = set()
+    evidence = list(answer.main_evidence) + list(answer.counter_evidence)
+    for item in evidence:
+        segment = item.segment
+        if segment.segment_id in seen:
+            continue
+        seen.add(segment.segment_id)
+        meta = segment.meta
+        reliability = getattr(meta.reliability, "value", meta.reliability)
+        citations.append(Citation(
+            ref_id=f"S{len(citations) + 1}",
+            segment_id=segment.segment_id,
+            text=segment.text,
+            doc_id=segment.doc_id,
+            country_iso3=meta.country_iso3,
+            party_id=meta.party_id,
+            doc_date=meta.doc_date.isoformat(),
+            doc_type=meta.doc_type,
+            reliability=str(reliability),
+            parent_text=segment.parent_text,
+            retrieval_reason=f"scientific_pipeline:{item.qualification_method}",
+        ))
+    return citations
+
+
+def format_scientific_answer(
+    answer: Any,
+    citations: list[Citation],
+    trace_path: str | None = None,
+) -> str:
+    by_segment = {citation.segment_id: citation.ref_id for citation in citations}
+    lines = [
+        "Analyse scientifique COMPASS",
+        "",
+        f"- Variable : {answer.variable_id}",
+        f"- Statut : {'abstention' if answer.abstained else 'résultat produit'}",
+        f"- Score : {answer.score if answer.score is not None else 'non attribué'}",
+        f"- Confiance : {answer.confidence if answer.confidence is not None else 'non calculée'}",
+        f"- Attribution NLI vérifiée : {'oui' if answer.attribution_checked else 'non'}",
+        f"- Incertitude résiduelle : {answer.residual_uncertainty or 'non renseignée'}",
+    ]
+    if trace_path:
+        lines.append(f"- Trace C15 : {trace_path}")
+    if answer.main_evidence:
+        lines.extend(["", "Preuves principales :"])
+        for item in answer.main_evidence[:6]:
+            ref = by_segment.get(item.segment.segment_id, "S?")
+            lines.append(f"- [{ref}] {_excerpt(item.segment.text, max_chars=300)}")
+    if answer.counter_evidence:
+        lines.extend(["", "Contre-preuves :"])
+        for item in answer.counter_evidence[:4]:
+            ref = by_segment.get(item.segment.segment_id, "S?")
+            lines.append(f"- [{ref}] {_excerpt(item.segment.text, max_chars=300)}")
+    return "\n".join(lines)
+
+
+def format_validation_report(report: Any) -> str:
+    return (
+        "Validation externe C14\n\n"
+        f"- Strate : {report.stratum}\n"
+        f"- Cas évalués : {report.n_cases}\n"
+        f"- Abstentions : {report.n_abstentions}\n"
+        f"- MAE : {report.mae:.4f}\n"
+        f"- Corrélation de Spearman : {report.spearman:.4f}\n"
+        f"- Couverture des intervalles : {report.interval_coverage:.4f}\n"
+        f"- ECE : {report.ece:.4f}\n"
+        f"- Taux d'attribution vérifiée : {report.attribution_rate:.4f}"
+    )
+
+
+def _scientific_unavailable_response(message: str, route: str) -> ChatResponse:
+    return ChatResponse(
+        answer=message,
+        citations=[],
+        model_used=None,
+        llm_used=False,
+        retrieval_count=0,
+        route=route,
+    )
 
 
 def describe_active_corpus(memory: Any, request: ChatRequest) -> dict[str, Any]:
@@ -824,6 +1053,18 @@ def extract_segment_ids(text: str) -> list[str]:
     return ids
 
 
+def extract_scientific_variable(text: str) -> str | None:
+    for pattern in (
+        _SCIENTIFIC_ANALYSIS_RE,
+        _SCIENTIFIC_VALIDATION_RE,
+        _SCIENTIFIC_CONTAMINATION_RE,
+    ):
+        match = pattern.match(text or "")
+        if match and match.group(1):
+            return match.group(1)
+    return None
+
+
 def route_chat_question(
     question: str,
     mode: str = "deterministic",
@@ -847,9 +1088,17 @@ def _route_chat_question_deterministic(
     question: str,
     party_entities: list[str] | None = None,
 ) -> str:
+    normalized = _normalize_intent_text(question)
+    if normalized in {"/variables", "variables", "variables scientifiques"}:
+        return "SCIENTIFIC_VARIABLES"
+    if _SCIENTIFIC_CONTAMINATION_RE.match(question):
+        return "SCIENTIFIC_CONTAMINATION"
+    if _SCIENTIFIC_VALIDATION_RE.match(question):
+        return "SCIENTIFIC_VALIDATION"
+    if _SCIENTIFIC_ANALYSIS_RE.match(question):
+        return "SCIENTIFIC_ANALYSIS"
     if extract_segment_ids(question):
         return "direct_lookup"
-    normalized = _normalize_intent_text(question)
     if _is_source_followup_intent(normalized):
         return "FOLLOW_UP_SOURCES"
     corpus_patterns = (
@@ -899,13 +1148,18 @@ def _route_chat_question_llm(
                 "Classify the user request into exactly one COMPASS route. "
                 "Return only one label and no explanation: direct_lookup, corpus_scope, evidence_query, "
                 "FOLLOW_UP_SOURCES, OUT_OF_CORPUS, COMPARISON_NEEDS_MORE_CORPUS, or "
-                "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA. "
+                "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA, SCIENTIFIC_ANALYSIS, "
+                "SCIENTIFIC_VALIDATION, SCIENTIFIC_VARIABLES, or SCIENTIFIC_CONTAMINATION. "
                 "direct_lookup means the user requests an explicit segment id. "
                 "corpus_scope means the user asks which corpus, dataset, country, party, date scope, or storage is active. "
                 "FOLLOW_UP_SOURCES asks for sources used in the previous answer. "
                 "OUT_OF_CORPUS requests an exhaustive list not established by the active documentary corpus. "
                 "COMPARISON_NEEDS_MORE_CORPUS compares at least two named political parties; comparing two themes is evidence_query. "
                 "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA asks who governed, who won, turnout, seats, or election results. "
+                "SCIENTIFIC_ANALYSIS runs an explicit /analyse <variable_id> command. "
+                "SCIENTIFIC_VALIDATION runs /valider on results produced in the session. "
+                "SCIENTIFIC_VARIABLES lists registered variables. "
+                "SCIENTIFIC_CONTAMINATION runs an explicit /contamination <variable_id> audit command. "
                 "evidence_query means the user asks about political content or evidence in indexed documents."
             ),
         },

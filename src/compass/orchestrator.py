@@ -47,6 +47,7 @@ class CompassRunner:
                  registry: VPartyRegistry, search: ActiveSearchEngine,
                  graph: "PoliticalGraph | None" = None) -> None:
         self._country = country
+        self._graph = graph
         self._registry = registry
         self._search = search
         self._builder = CaseFileBuilder(general, country, graph=graph)
@@ -56,6 +57,7 @@ class CompassRunner:
         self._diagnoser = DiagnosisEngine()
         self._panel = JudgePanel(ReasoningEngine(country))
         self._composer = AnswerComposer()
+        self.last_trace_path = None
 
     def run_case(self, case: CaseKey, variable_ids: list[str]) -> list[FinalAnswer]:
         """Traite toutes les variables demandées pour un cas, avec traçabilité.
@@ -67,6 +69,7 @@ class CompassRunner:
             jamais transformée silencieusement en abstention.
         """
         trace = TraceLogger(f"{case.country_iso3}_{case.party_id}_{case.election_id}")
+        self.last_trace_path = trace.path
         trace.record("case_start", case=case, variables=variable_ids)
         answers: list[FinalAnswer] = []
 
@@ -96,7 +99,7 @@ class CompassRunner:
                 trace.record("active_search", variable=var_id,
                              n_new_segments=len(new_segs))
                 if new_segs:
-                    self._country.add_documents(new_segs)      # versés en C03
+                    self._store_discovered_segments(new_segs)
                     dossier = self._builder.build(case)        # dossier reconstruit
                 searches_done += 1
 
@@ -141,3 +144,10 @@ class CompassRunner:
         logger.info("Cas %s/%s : %d réponses (trace : %s)",
                     case.party_id, case.election_id, len(answers), trace.path)
         return answers
+
+    def _store_discovered_segments(self, segments: list) -> None:
+        """Persist active-search evidence in country memory and graph."""
+        self._country.add_documents(segments)
+        if self._graph is not None:
+            self._graph.ingest(segments)
+            self._graph.save()

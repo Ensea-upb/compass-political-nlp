@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--country", required=True, help="Three-letter country ISO3 code")
     parser.add_argument("--as-of", required=True, help="Temporal cutoff date, YYYY-MM-DD")
     parser.add_argument("--party", help="Optional party id filter")
+    parser.add_argument("--election-id", help="Election id for scientific /analyse commands")
     parser.add_argument("--k", type=int, default=8, help="Number of evidence segments to retrieve")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
@@ -37,11 +38,17 @@ def main() -> None:
         raise SystemExit("Install the chat UI dependency first: pip install -r requirements-chat.txt") from exc
 
     from compass.country_memory import CountryMemory
+    from compass.chat.scientific_service import ScientificChatService
     from compass.political_graph import PoliticalGraph
 
     graph = PoliticalGraph(args.country)
     graph.load()
-    engine = ChatEngine(CountryMemory(args.country), graph=graph)
+    memory = CountryMemory(args.country)
+    engine = ChatEngine(
+        memory,
+        graph=graph,
+        scientific_service=ScientificChatService(memory, graph),
+    )
     cutoff = date.fromisoformat(args.as_of)
 
     def respond(message: str, history):
@@ -52,6 +59,7 @@ def main() -> None:
             engine=engine,
             cutoff=cutoff,
             party_id=args.party,
+            election_id=args.election_id,
             k=args.k,
         )
         history.append((message, answer))
@@ -72,7 +80,15 @@ def main() -> None:
 
 
 
-def _answer_message(message: str, history, engine: ChatEngine, cutoff: date, party_id: str | None, k: int) -> str:
+def _answer_message(
+    message: str,
+    history,
+    engine: ChatEngine,
+    cutoff: date,
+    party_id: str | None,
+    k: int,
+    election_id: str | None = None,
+) -> str:
     try:
         if _is_greeting(message):
             return (
@@ -83,6 +99,7 @@ def _answer_message(message: str, history, engine: ChatEngine, cutoff: date, par
             question=message,
             as_of=cutoff,
             party_id=party_id,
+            election_id=election_id,
             k=k,
             history=_normalize_history(history),
         )

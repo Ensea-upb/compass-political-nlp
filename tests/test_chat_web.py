@@ -86,6 +86,7 @@ def test_chat_web_forwards_selected_routing_mode():
     class RoutingEngine:
         def ask(self, request):
             assert request.routing_mode == "llm"
+            assert request.election_id == "E1"
             return type("Response", (), {
                 "answer": "Routed answer.",
                 "citations": [],
@@ -101,6 +102,7 @@ def test_chat_web_forwards_selected_routing_mode():
         history=[],
         cutoff=date(2009, 9, 27),
         party_id="41320",
+        election_id="E1",
         k=8,
         routing_mode="llm",
     )

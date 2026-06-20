@@ -68,8 +68,18 @@ class AnswerComposer:
         return FinalAnswer(
             case=case, variable_id=sheet.variable_id, score=None,
             confidence=None, abstained=True,
+            main_evidence=diagnosis.convergent,
+            counter_evidence=diagnosis.contradictory,
+            declared=[e.segment.text for e in diagnosis.convergent
+                      if e.regime.value == "declared"],
+            observed=[e.segment.text for e in diagnosis.convergent
+                      if e.regime.value == "observed"],
             residual_uncertainty=f"Abstention (p_suffisance={sufficiency_proba:.2f}) ; "
                                  f"manques : {'; '.join(diagnosis.missing) or 'non spécifiés'}",
+            sources=sorted({
+                e.segment.meta.source_url or e.segment.meta.source_path or e.segment.doc_id
+                for e in diagnosis.convergent + diagnosis.contradictory
+            }),
         )
 
     # ------------------------------------------------------------------ AIS / R-5

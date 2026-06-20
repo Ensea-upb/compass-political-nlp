@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import compass.chat.engine as chat_engine
 from compass.chat import ChatEngine, ChatRequest
@@ -99,6 +100,67 @@ def test_chat_engine_uses_llm_and_returns_citations(monkeypatch):
     assert response.citations[0].ref_id == "S1"
     assert "[S1]" in response.answer
     assert response.prompt_messages
+
+
+def test_chat_engine_runs_scientific_pipeline_route():
+    class Service:
+        def analyze(self, variable_id, **kwargs):
+            assert variable_id == "v2pavote"
+            assert kwargs["party_id"] == "P100"
+            assert kwargs["election_id"] == "E1"
+            return SimpleNamespace(
+                variable_id=variable_id,
+                abstained=False,
+                score=3.0,
+                confidence=0.75,
+                attribution_checked=True,
+                residual_uncertainty="aucun manque",
+                main_evidence=[],
+                counter_evidence=[],
+            )
+
+    response = ChatEngine(FakeMemory(), scientific_service=Service()).ask(ChatRequest(
+        question="/analyse v2pavote",
+        as_of=date(2009, 9, 27),
+        party_id="P100",
+        election_id="E1",
+    ))
+
+    assert response.route == "SCIENTIFIC_ANALYSIS"
+    assert "Score : 3.0" in response.answer
+    assert "Attribution NLI vérifiée : oui" in response.answer
+
+
+def test_chat_engine_exposes_scientific_validation_and_variable_routes():
+    class Service:
+        def available_variables(self):
+            return ["v1", "v2"]
+
+        def validate_cached(self, variable_id):
+            assert variable_id == "v1"
+            return SimpleNamespace(
+                stratum="chat_session", n_cases=1, n_abstentions=0,
+                mae=0.1, spearman=1.0, interval_coverage=1.0,
+                ece=0.05, attribution_rate=1.0,
+            )
+
+        def contamination_check(self, variable_id, **kwargs):
+            assert variable_id == "v1"
+            return [{"model": "judge", "claims_knowledge": False, "raw": "inconnu"}]
+
+    engine = ChatEngine(FakeMemory(), scientific_service=Service())
+    variables = engine.ask(ChatRequest(question="/variables", as_of=date(2009, 9, 27)))
+    validation = engine.ask(ChatRequest(question="/valider v1", as_of=date(2009, 9, 27)))
+    contamination = engine.ask(ChatRequest(
+        question="/contamination v1", as_of=date(2009, 9, 27), party_id="P100",
+    ))
+
+    assert variables.route == "SCIENTIFIC_VARIABLES"
+    assert "v1" in variables.answer
+    assert validation.route == "SCIENTIFIC_VALIDATION"
+    assert "MAE : 0.1000" in validation.answer
+    assert contamination.route == "SCIENTIFIC_CONTAMINATION"
+    assert "claims_knowledge=False" in contamination.answer
 
 
 def test_chat_engine_distinguishes_retrieval_and_prompt_evidence_budgets(monkeypatch):
@@ -285,6 +347,10 @@ def test_scope_routes_are_intentional_and_comparison_is_party_aware():
     assert route_chat_question("compare la position du parti sur X et Y", party_entities=entities) == "evidence_query"
     assert route_chat_question("qui gouvernait ?") == "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA"
     assert route_chat_question("quelles sont les sources exactes ?") == "FOLLOW_UP_SOURCES"
+    assert route_chat_question("/analyse v2pavote") == "SCIENTIFIC_ANALYSIS"
+    assert route_chat_question("/valider v2pavote") == "SCIENTIFIC_VALIDATION"
+    assert route_chat_question("/variables") == "SCIENTIFIC_VARIABLES"
+    assert route_chat_question("/contamination v2pavote") == "SCIENTIFIC_CONTAMINATION"
 
 
 def test_llm_router_uses_only_allowed_route_labels(monkeypatch):
@@ -329,6 +395,10 @@ def test_answer_validation_policy_depends_on_route():
     assert validation_policy_for_route("COMPARISON_NEEDS_MORE_CORPUS") == "none"
     assert validation_policy_for_route("ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA") == "none"
     assert validation_policy_for_route("FOLLOW_UP_SOURCES") == "none"
+    assert validation_policy_for_route("SCIENTIFIC_ANALYSIS") == "none"
+    assert validation_policy_for_route("SCIENTIFIC_VALIDATION") == "none"
+    assert validation_policy_for_route("SCIENTIFIC_VARIABLES") == "none"
+    assert validation_policy_for_route("SCIENTIFIC_CONTAMINATION") == "none"
     validate_llm_answer("Session corpus description without citation.", [], route="corpus_scope")
 
 

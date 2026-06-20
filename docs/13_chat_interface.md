@@ -1,12 +1,21 @@
 # Interface COMPASS Chat
 
-COMPASS Chat est une couche conversationnelle au-dessus de la mémoire documentaire. Elle ne remplace ni l'ingestion, ni le retrieval, ni les garde-fous du pipeline.
+COMPASS Chat est la façade d'utilisation de COMPASS. Elle expose deux chemins complémentaires : la question documentaire libre et l'analyse scientifique d'une variable enregistrée. Le second chemin réutilise directement le pipeline C04-C15 au lieu de reproduire sa logique dans le chat.
 
 ## Chaîne de traitement
 
 ```text
 question utilisateur
 → routage
+├─ question libre → retrieval documentaire → réponse RAG citée
+└─ /analyse <variable> → pipeline scientifique C04-C15
+   → suffisance ↔ recherche active
+   → diagnostic → juges → agrégation → sortie → trace C15
+   → /valider → coffre séparé C14
+
+Chemin documentaire :
+
+question
 → récupération du périmètre ou retrieval documentaire
 → dense + BM25
 → contexte parent
@@ -20,7 +29,7 @@ question utilisateur
 
 ## Routes
 
-Sept routes sont actuellement autorisées :
+Onze routes sont actuellement autorisées :
 
 - `direct_lookup` : récupération directe d'un `segment_id` ;
 - `corpus_scope` : description déterministe du pays, du parti, de la date limite et du stockage actifs ;
@@ -29,6 +38,10 @@ Sept routes sont actuellement autorisées :
 - `OUT_OF_CORPUS` : demande exhaustive que le corpus documentaire actif ne peut établir ;
 - `COMPARISON_NEEDS_MORE_CORPUS` : comparaison explicite entre au moins deux partis ;
 - `ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA` : résultats, sièges, participation, vainqueur ou gouvernement.
+- `SCIENTIFIC_VARIABLES` : variables ayant passé la gate d'adhérence ;
+- `SCIENTIFIC_ANALYSIS` : exécution de `CompassRunner` pour une variable ;
+- `SCIENTIFIC_VALIDATION` : validation C14 des résultats produits dans la session ;
+- `SCIENTIFIC_CONTAMINATION` : sonde C15 explicite, séparée de la génération.
 
 Les trois dernières routes ne produisent pas un refus sec. Elles décrivent ce que le corpus actif permet d'établir, puis indiquent les données manquantes. Le pays, les partis, les dates, les types de documents et leur nombre sont lus dans la `CountryMemory` active : aucune réponse de périmètre n'est écrite en dur pour une démonstration particulière.
 
@@ -42,9 +55,31 @@ FOLLOW_UP_SOURCES → none
 OUT_OF_CORPUS → none
 COMPARISON_NEEDS_MORE_CORPUS → none
 ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA → none
+SCIENTIFIC_VARIABLES → none
+SCIENTIFIC_ANALYSIS → none
+SCIENTIFIC_VALIDATION → none
+SCIENTIFIC_CONTAMINATION → none
 ```
 
 Une route inconnue est refusée.
+
+## Commandes scientifiques
+
+```text
+/variables
+/analyse v2paplur
+/valider
+/valider v2paplur
+/contamination v2paplur
+```
+
+`/analyse` construit un `CaseKey` avec le pays, le parti, l'élection et la borne temporelle de la session. Il exécute ensuite le registre V-Party, le retrieval interne, la qualification NLI, le test de suffisance, la recherche active bornée si nécessaire, le diagnostic, le panel de juges, l'agrégation, la composition finale et les garde-fous. La réponse affiche le score ou l'abstention, la confiance, les preuves, l'incertitude et le chemin de la trace C15.
+
+`/variables` ne montre que les fiches dont `adherence_passed` vaut `true`. Une variable non qualifiée reste refusée par le registre.
+
+`/valider` n'est disponible qu'après une analyse et seulement si le coffre C14 contient l'étalon correspondant. L'étalon n'est jamais transmis au pipeline de production.
+
+`/contamination` demande explicitement aux modèles juges s'ils récitent un score sans preuve. Cette sonde ne modifie pas la réponse scientifique.
 
 ## Routage déterministe ou LLM
 
@@ -171,6 +206,7 @@ python apps/chat_web.py \
   --country "$COUNTRY_ISO3" \
   --as-of "$CUTOFF_DATE" \
   --party "$PARTY_ID" \
+  --election-id "$ELECTION_ID" \
   --port 41771
 ```
 

@@ -103,6 +103,7 @@ Le dépôt implémente notamment :
 - le retrieval dense + BM25 et le reranking cross-encoder ;
 - l'ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF est bloqué ;
 - un chat RAG avec citations `[Sx]`, page d'inspection du prompt, routage sélectionnable et validation dépendante de la route ;
+- une façade scientifique du chat vers `CompassRunner` via `/analyse <variable_id>`, avec validation C14 séparée ;
 - un profil Onyxia validé avec un modèle local open-weight de 3 milliards de paramètres.
 
 Le corpus Manifesto mondial et le chat multi-pays sans contamination sont inscrits comme chantier différé dans la [roadmap](docs/06_roadmap.md). Ils ne sont pas encore implémentés.

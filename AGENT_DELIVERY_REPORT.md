@@ -58,11 +58,22 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - chaque arête conserve le pays, le parti, la date et le segment source.
 - `scripts/build_political_graph.py` permet de construire le graphe depuis un index Chroma existant, sans réingérer ni dupliquer les manifestes.
 
+## Chat comme façade scientifique
+
+- les questions libres conservent le chemin RAG rapide et cité ;
+- `/variables` expose uniquement les fiches ayant passé la gate d'adhérence ;
+- `/analyse <variable_id>` délègue au vrai `CompassRunner` et exécute C04-C15 ;
+- la recherche active alimente aussi le graphe lorsqu'elle découvre de nouveaux segments ;
+- la réponse scientifique expose score ou abstention, confiance, preuves, contre-preuves, attribution NLI, incertitude et trace C15 ;
+- `/valider [variable_id]` exécute C14 sur les réponses de la session, depuis le coffre séparé ;
+- `/contamination <variable_id>` expose explicitement la sonde C15 sans influencer le raisonnement de production ;
+- le service est initialisé paresseusement : les modèles scientifiques lourds ne sont chargés qu'à la première analyse.
+
 ## Vérifications exécutées
 
 ```text
 python -m pytest -q
-125 passed
+132 passed
 
 ruff check src apps tests examples scripts
 All checks passed!

@@ -738,3 +738,17 @@ class TestOrchestratorWiring:
         assert mock_diagnosis.graph_context == expected, (
             "graph_context non propagé au diagnostic"
         )
+
+    def test_active_search_segments_update_country_memory_and_graph(self):
+        from compass.orchestrator import CompassRunner
+
+        runner = CompassRunner.__new__(CompassRunner)
+        runner._country = MagicMock()
+        runner._graph = MagicMock()
+        segments = [_seg("New relation evidence.", "searched")]
+
+        runner._store_discovered_segments(segments)
+
+        runner._country.add_documents.assert_called_once_with(segments)
+        runner._graph.ingest.assert_called_once_with(segments)
+        runner._graph.save.assert_called_once_with()
