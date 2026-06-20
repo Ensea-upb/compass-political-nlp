@@ -1,7 +1,7 @@
 # Rapport de livraison Codex — audit COMPASS Chat
 
-Date : 19 juin 2026  
-Référence auditée : `9fa70fa`  
+Date : 20 juin 2026
+Référence auditée : branche de travail après `2b56fd1`
 Statut : **GO_WITH_WARNINGS**
 
 ## Résultat
@@ -46,6 +46,15 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - tests directs ajoutés pour l'agrégation, la suffisance, le diagnostic, la temporalité et la mémoire générale ;
 - Ruff ajouté aux dépendances de test et à GitHub Actions.
 
+## Chunking multilingue renforcé
+
+- la structure parent/enfant et les identifiants de segments restent compatibles avec le retrieval existant ;
+- les ruptures thématiques utilisent désormais des embeddings multilingues et une similarité cosinus ;
+- le chargement du modèle est paresseux et mis en cache ;
+- un repli lexical déterministe maintient l'ingestion si le modèle est indisponible ;
+- titres de section, plages de paragraphes et ordre des segments sont conservés dans les schémas puis persistés dans Chroma ;
+- document, parti, date et langue continuent de provenir du même `DocumentMeta` traçable.
+
 ## Intégration du graphe politique
 
 - l'ingestion PDF ou `texts_and_annotations` appelle désormais `PoliticalGraph.ingest()` puis `save()` ;
@@ -73,7 +82,7 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 
 ```text
 python -m pytest -q
-132 passed
+136 passed
 
 ruff check src apps tests examples scripts
 All checks passed!

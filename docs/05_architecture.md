@@ -49,7 +49,7 @@ Un fichier GraphML distinct est utilisé par pays. Les identifiants de segments 
 
 ## Chunking et retrieval
 
-Le document est découpé en parents contextuels et enfants citables. Le chat recherche les enfants, rattache leur parent, fusionne dense et BM25, puis applique le cross-encoder configuré.
+Le document est découpé en parents contextuels et enfants citables. Les frontières thématiques sont détectées par embeddings multilingues, avec un repli lexical déterministe. Chaque segment conserve le titre de section, sa plage de paragraphes et son ordre, ainsi que les métadonnées documentaires. Le chat recherche les enfants, rattache leur parent, fusionne dense et BM25, puis applique le cross-encoder configuré.
 
 ## Chat
 

@@ -163,7 +163,12 @@ class CompassSettings(LLMConfig):
     child_chunk_min_chars: int = 60
     child_chunk_max_chars: int = 650
     semantic_chunking_enabled: bool = True
-    semantic_chunk_similarity_threshold: float = 0.08
+    semantic_chunk_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    semantic_chunk_similarity_threshold: float = 0.42
+    semantic_chunk_min_parent_chars: int = 120
+    semantic_chunk_context_units: int = 3
+    semantic_chunk_batch_size: int = 32
+    semantic_chunk_fallback_jaccard_threshold: float = 0.08
 
     # --- Graphe de connaissances politiques (C02b, Gap 3) ---
     graph_path: Path = Path("data/political_graph.graphml")

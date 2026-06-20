@@ -98,7 +98,7 @@ compass-political-nlp/
 
 Le dépôt implémente notamment :
 
-- le chunking hiérarchique parent/enfant avec séparation sémantique légère ;
+- le chunking hiérarchique parent/enfant avec embeddings multilingues, titres et provenance structurelle ;
 - l'indexation par pays dans ChromaDB ;
 - le retrieval dense + BM25 et le reranking cross-encoder ;
 - l'ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF est bloqué ;

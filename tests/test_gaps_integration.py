@@ -171,7 +171,8 @@ class TestGap1_HierarchicalChunking:
         from compass import document_pipeline as dp
 
         monkeypatch.setattr(dp.settings, "semantic_chunking_enabled", True)
-        monkeypatch.setattr(dp.settings, "semantic_chunk_similarity_threshold", 0.2)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_fallback_jaccard_threshold", 0.2)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_min_parent_chars", 80)
         monkeypatch.setattr(dp.settings, "child_chunk_min_chars", 20)
         monkeypatch.setattr(dp.settings, "parent_chunk_size", 300)
         text = (
@@ -188,6 +189,88 @@ class TestGap1_HierarchicalChunking:
         assert "Democratic accountability" in parents[0].text
         assert any("Solar infrastructure" in parent.text for parent in parents[1:])
 
+    def test_multilingual_embeddings_drive_topic_boundaries(self, monkeypatch):
+        from compass import document_pipeline as dp
+
+        class Encoder:
+            def encode(self, texts, **kwargs):
+                assert kwargs["normalize_embeddings"] is True
+                return [
+                    [1.0, 0.0] if "democr" in text.lower() or "election" in text.lower()
+                    else [0.0, 1.0]
+                    for text in texts
+                ]
+
+        monkeypatch.setattr(dp, "_load_semantic_encoder", lambda *args: Encoder())
+        monkeypatch.setattr(dp.settings, "semantic_chunking_enabled", True)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_similarity_threshold", 0.5)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_min_parent_chars", 60)
+        monkeypatch.setattr(dp.settings, "parent_chunk_size", 1000)
+        text = (
+            "La democratie protege le controle parlementaire. "
+            "Les elections garantissent la responsabilite publique. "
+            "Les energies renouvelables renforcent le reseau electrique. "
+            "Les infrastructures solaires soutiennent la transition energetique."
+        )
+
+        parents = [
+            segment for segment in self.p._finalize(text, _meta(doc_id="d9"))
+            if segment.parent_segment_id is None
+        ]
+
+        assert len(parents) == 2
+        assert "elections" in parents[0].text
+        assert "renouvelables" in parents[1].text
+
+    def test_semantic_chunking_has_deterministic_fallback(self, monkeypatch):
+        from compass import document_pipeline as dp
+
+        def unavailable(*args):
+            raise RuntimeError("model unavailable")
+
+        monkeypatch.setattr(dp, "_load_semantic_encoder", unavailable)
+        monkeypatch.setattr(dp.settings, "semantic_chunking_enabled", True)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_min_parent_chars", 60)
+        monkeypatch.setattr(dp.settings, "semantic_chunk_fallback_jaccard_threshold", 0.2)
+        monkeypatch.setattr(dp.settings, "parent_chunk_size", 1000)
+        text = (
+            "Democratic institutions protect parliament and elections. "
+            "Transparent elections reinforce democratic institutions. "
+            "Solar grids expand renewable energy infrastructure. "
+            "Renewable infrastructure supports solar electricity."
+        )
+
+        parents = [
+            segment for segment in self.p._finalize(text, _meta(doc_id="d10"))
+            if segment.parent_segment_id is None
+        ]
+
+        assert len(parents) >= 2
+
+    def test_preserves_headings_paragraph_order_and_document_metadata(self, monkeypatch):
+        from compass import document_pipeline as dp
+
+        monkeypatch.setattr(dp.settings, "semantic_chunking_enabled", False)
+        text = (
+            "DEMOCRACY\n\n"
+            "Citizens control public institutions.\n\n"
+            "ECONOMY\n\n"
+            "Workers receive fair wages."
+        )
+        segments = self.p._finalize(text, _meta(doc_id="d11"))
+        parents = [segment for segment in segments if segment.parent_segment_id is None]
+        children = [segment for segment in segments if segment.parent_segment_id is not None]
+
+        assert [parent.section_title for parent in parents] == ["DEMOCRACY", "ECONOMY"]
+        assert [parent.chunk_index for parent in parents] == [0, 1]
+        assert parents[0].paragraph_start == 0
+        assert parents[0].paragraph_end == 1
+        assert parents[1].paragraph_start == 2
+        assert parents[1].paragraph_end == 3
+        assert [child.chunk_index for child in children] == list(range(len(children)))
+        assert all(child.meta.doc_id == "d11" for child in children)
+        assert all(child.meta.country_iso3 == "SEN" for child in children)
+
     def test_country_memory_marks_parent_and_child_levels(self):
         from tests.conftest import CHROMA_COL
 
@@ -203,6 +286,25 @@ class TestGap1_HierarchicalChunking:
         metadatas = CHROMA_COL.upsert.call_args.kwargs["metadatas"]
         assert metadatas[0]["segment_level"] == "parent"
         assert metadatas[1]["segment_level"] == "child"
+
+    def test_country_memory_persists_structural_metadata(self):
+        from tests.conftest import CHROMA_COL
+
+        CHROMA_COL.upsert.reset_mock()
+        memory = _country_memory()
+        segment = _seg("Evidence.", seg_id="doc:p000c000", parent_id="doc:p000")
+        segment.chunk_index = 4
+        segment.paragraph_start = 7
+        segment.paragraph_end = 8
+        segment.section_title = "Democracy"
+
+        memory.add_documents([segment])
+
+        metadata = CHROMA_COL.upsert.call_args.kwargs["metadatas"][0]
+        assert metadata["chunk_index"] == 4
+        assert metadata["paragraph_start"] == 7
+        assert metadata["paragraph_end"] == 8
+        assert metadata["section_title"] == "Democracy"
 
     def test_country_memory_describes_the_indexed_corpus(self):
         from tests.conftest import CHROMA_COL

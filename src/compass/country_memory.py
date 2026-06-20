@@ -176,6 +176,10 @@ class CountryMemory:
                 # Gap 1 — chunking hiérarchique : lien enfant → parent
                 "parent_segment_id": s.parent_segment_id or "",
                 "segment_level": "child" if s.parent_segment_id else "parent",
+                "chunk_index": s.chunk_index,
+                "paragraph_start": s.paragraph_start if s.paragraph_start is not None else -1,
+                "paragraph_end": s.paragraph_end if s.paragraph_end is not None else -1,
+                "section_title": s.section_title or "",
             } for s in segments],
         )
 

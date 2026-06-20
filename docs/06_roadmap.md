@@ -4,7 +4,7 @@
 
 - ingestion de textes, URL et PDF avec OCR de repli ;
 - métadonnées temporelles et filtrage historique ;
-- chunking parent/enfant avec séparation sémantique légère ;
+- chunking parent/enfant avec embeddings multilingues, titres, paragraphes et repli déterministe ;
 - mémoire structurée SQLite et mémoire documentaire ChromaDB ;
 - retrieval dense + BM25, contexte parent et reranking cross-encoder ;
 - ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF original est bloqué ;
@@ -38,7 +38,7 @@ Ce chantier est documenté pour une reprise ultérieure. Il n'est pas encore imp
 - annoter un jeu de requêtes et passages pour mesurer rappel, précision et qualité du reranking ;
 - calibrer la taille des parents, des enfants et du pool de reranking ;
 - évaluer le graphe politique sur des relations annotées ;
-- renforcer le traitement multilingue et la segmentation sensible à la langue ;
+- calibrer le seuil de rupture sémantique sur un échantillon multilingue annoté ;
 - étendre le registre de variables ;
 - mesurer l'incertitude, les contradictions et la fiabilité des sources ;
 - documenter un protocole reproductible de comparaison entre pays et élections.

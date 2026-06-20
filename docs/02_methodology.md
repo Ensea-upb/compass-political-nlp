@@ -17,7 +17,9 @@ Le pipeline produit :
 - des parents, blocs thématiques conservant le contexte local ;
 - des enfants, unités plus courtes destinées au retrieval et aux citations.
 
-Les fragments trop courts sont fusionnés et les fragments trop longs sont divisés. Une baisse de cohésion lexicale peut ouvrir un nouveau parent.
+Les fragments trop courts sont fusionnés et les fragments trop longs sont divisés. Les titres de section, les limites de paragraphes et l'ordre de lecture sont conservés avec chaque segment, en plus du document, du parti, de la date et de la langue.
+
+La rupture thématique repose sur des embeddings multilingues calculés en une passe sur les unités du document. Le pipeline compare l'unité suivante au contexte récent du parent et ouvre un nouveau parent lorsque leur similarité cosinus devient trop faible. Si le modèle d'embeddings est absent ou échoue, un repli lexical déterministe maintient l'ingestion sans masquer l'incident dans les journaux.
 
 ### 3. Retrieval
 

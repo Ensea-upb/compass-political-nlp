@@ -117,6 +117,11 @@ class Segment(BaseModel):
     # Texte du parent injecté à la volée au moment du re-ranking (C06).
     # Non persisté dans ChromaDB — rempli par InternalRetriever.
     parent_text: str | None = None
+    # Provenance structurelle conservee pendant toute la chaine d'indexation.
+    chunk_index: int = 0
+    paragraph_start: int | None = None
+    paragraph_end: int | None = None
+    section_title: str | None = None
 
 
 # --------------------------------------------------------------------------- registre
