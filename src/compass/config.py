@@ -150,6 +150,7 @@ class CompassSettings(LLMConfig):
     chat_prompt_reserved_output_tokens: int = Field(default=500, ge=200)
     chat_prompt_chars_per_token: float = Field(default=3.5, ge=2.0, le=6.0)
     chat_max_retrieval_trace_chars: int = Field(default=1400, ge=400, le=4000)
+    chat_syntax_validation_enabled: bool = True
     chat_semantic_validation_enabled: bool = True
     chat_nli_entailment_threshold: float = 0.65
     chat_repair_max_attempts: int = Field(default=1, ge=0, le=2)

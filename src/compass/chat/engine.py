@@ -1666,21 +1666,28 @@ def generate_validated_answer(
             if not raw:
                 raise AnswerContractError("empty answer")
             answer = strip_echoed_question_label(strip_appended_sources(raw))
-            try:
-                validate_llm_answer(answer, citations, route=route)
-            except Exception as syntax_exc:
+            if settings.chat_syntax_validation_enabled:
+                try:
+                    validate_llm_answer(answer, citations, route=route)
+                except Exception as syntax_exc:
+                    trace.append({
+                        "stage": "syntax",
+                        "attempt": attempt,
+                        "status": "rejected",
+                        "error": str(syntax_exc),
+                    })
+                    raise
                 trace.append({
                     "stage": "syntax",
                     "attempt": attempt,
-                    "status": "rejected",
-                    "error": str(syntax_exc),
+                    "status": "accepted",
                 })
-                raise
-            trace.append({
-                "stage": "syntax",
-                "attempt": attempt,
-                "status": "accepted",
-            })
+            else:
+                trace.append({
+                    "stage": "syntax",
+                    "attempt": attempt,
+                    "status": "skipped",
+                })
             if settings.chat_semantic_validation_enabled:
                 claims = evaluate_semantic_grounding(answer, citations)
                 trace.extend({
