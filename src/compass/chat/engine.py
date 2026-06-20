@@ -15,6 +15,11 @@ from datetime import date
 from typing import Any
 
 from compass.config import settings
+from compass.chat.query_analysis import (
+    QueryAnalysis,
+    analyze_question,
+    format_query_analysis,
+)
 from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
@@ -179,6 +184,7 @@ class ChatResponse:
     prompt_messages: list[dict[str, str]] = field(default_factory=list)
     route: str = "evidence_query"
     prompt_citation_count: int = 0
+    query_analysis: dict[str, Any] = field(default_factory=dict)
 
 
 class AnswerContractError(RuntimeError):
@@ -466,9 +472,15 @@ class ChatEngine:
             "ELECTION_CONTEXT_NEEDS_STRUCTURED_DATA",
         }:
             return self._answer_scope_limit(request, scope, route)
-        retrieved = query_evidence(
+        question_analysis = analyze_question(
+            question,
+            scope=scope,
+            model_name=self.model_name,
+            complete=complete_chat,
+        )
+        retrieved = query_evidence_multi(
             self.memory,
-            build_retrieval_query(question),
+            question_analysis.subqueries,
             as_of=request.as_of,
             k=request.k,
             party_id=request.party_id,
@@ -483,6 +495,7 @@ class ChatEngine:
                 llm_used=False,
                 retrieval_count=0,
                 route="evidence_query",
+                query_analysis=question_analysis.model_dump(),
             )
         retrieved = attach_parent_context(self.memory, retrieved)
         all_citations = build_citations(retrieved)
@@ -495,6 +508,7 @@ class ChatEngine:
             request,
             general_context,
             graph_context,
+            question_analysis,
         )
         try:
             answer = complete_chat(
@@ -520,6 +534,7 @@ class ChatEngine:
                 prompt_messages=messages,
                 route=route,
                 prompt_citation_count=len(citations),
+                query_analysis=question_analysis.model_dump(),
             )
         except Exception as exc:
             fallback = build_extractive_answer(question, citations, exc)
@@ -534,6 +549,7 @@ class ChatEngine:
                 prompt_messages=messages,
                 route=route,
                 prompt_citation_count=len(citations),
+                query_analysis=question_analysis.model_dump(),
             )
 
 
@@ -697,6 +713,48 @@ def format_validation_report(report: Any) -> str:
     )
 
 
+def query_evidence_multi(
+    memory: Any,
+    queries: list[str],
+    *,
+    as_of: date,
+    k: int,
+    party_id: str | None,
+    include_unverified: bool,
+) -> list[dict[str, Any]]:
+    """Retrieve each complementary query and fuse rankings without duplicates."""
+    fused: dict[str, dict[str, Any]] = {}
+    scores: dict[str, float] = {}
+    matches: dict[str, list[int]] = {}
+    for query_index, query in enumerate(queries):
+        records = query_evidence(
+            memory,
+            query,
+            as_of=as_of,
+            k=k,
+            party_id=party_id,
+            include_unverified=include_unverified,
+        )
+        for rank, record in enumerate(records, start=1):
+            segment_id = str(record.get("segment_id") or "")
+            if not segment_id:
+                continue
+            fused.setdefault(segment_id, dict(record))
+            scores[segment_id] = scores.get(segment_id, 0.0) + 1.0 / (60 + rank)
+            matches.setdefault(segment_id, []).append(query_index + 1)
+    ranked = sorted(fused, key=lambda segment_id: (-scores[segment_id], segment_id))
+    output: list[dict[str, Any]] = []
+    for segment_id in ranked[:k]:
+        record = dict(fused[segment_id])
+        record["multi_query_score"] = scores[segment_id]
+        record["retrieval_reason"] = (
+            f"multi-query RRF; matched subqueries "
+            f"{','.join(str(index) for index in sorted(set(matches[segment_id])))}"
+        )
+        output.append(record)
+    return output
+
+
 def _scientific_unavailable_response(message: str, route: str) -> ChatResponse:
     return ChatResponse(
         answer=message,
@@ -793,6 +851,7 @@ def build_messages(
     request: ChatRequest,
     general_context: list[GeneralContext] | None = None,
     graph_context: list[dict[str, Any]] | None = None,
+    question_analysis: QueryAnalysis | None = None,
 ) -> list[dict[str, str]]:
     prompt_citations = citations[:settings.chat_max_prompt_citations]
     evidence_context = "\n\n".join(
@@ -808,12 +867,18 @@ def build_messages(
     general_context_text = format_general_context_for_prompt(general_context or [])
     relational_context_text = format_graph_context_for_prompt(graph_context or [])
     analytical_context_text = build_analytical_context(question)
+    question_analysis_text = (
+        format_query_analysis(question_analysis)
+        if question_analysis is not None
+        else "not available"
+    )
     language = infer_answer_language(question)
     system = (
         "You are COMPASS Chat, a research assistant for political manifesto analysis. "
         "Your task is evidence-grounded analysis, not open-ended political commentary. "
         "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
-        "There are four inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, RELATIONAL_CONTEXT, and CITED_EVIDENCE. "
+        "QUESTION_ANALYSIS is a retrieval plan, not factual evidence, and must never be cited. "
+        "There are four evidence-framing inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, RELATIONAL_CONTEXT, and CITED_EVIDENCE. "
         "ANALYTICAL_CONTEXT gives a political-science reading frame; it is not factual evidence and must never be cited. "
         "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
         "RELATIONAL_CONTEXT contains inferred entity co-occurrences from the political graph. It is not verified fact, "
@@ -840,6 +905,8 @@ def build_messages(
     user = (
         f"Scope: {scope}\n\n"
         f"Question: {question}\n\n"
+        "QUESTION_ANALYSIS - retrieval plan only, never cite this block:\n"
+        f"{question_analysis_text}\n\n"
         "ANALYTICAL_CONTEXT - conceptual reading frame, never cite this block:\n"
         f"{analytical_context_text}\n\n"
         "GENERAL_CONTEXT - background only, never cite this block:\n"
@@ -1381,17 +1448,6 @@ def format_citations(citations: list[Citation]) -> str:
         lines.append(f"  segment: `{citation.segment_id}`")
         lines.append(f"  excerpt: \"{_excerpt(citation.text)}\"")
     return "\n".join(lines)
-
-
-def build_retrieval_query(question: str) -> str:
-    """Small query expansion for demo RAG without changing the user question."""
-    lowered = question.lower()
-    if any(token in lowered for token in ("economy", "economic", "emploi", "salaires", "économie", "economie")):
-        return (
-            f"{question} employment wages industry domestic market exports innovation "
-            "taxation growth sustainable economy decent work jobs salaires emploi industrie"
-        )
-    return question
 
 
 def _source_label(citation: Citation) -> str:

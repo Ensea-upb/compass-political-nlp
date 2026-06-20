@@ -182,7 +182,7 @@ HTML = """<!doctype html>
           throw new Error(payload.error || ('HTTP ' + response.status));
         }
         const meta = payload.route
-          ? `route=${payload.route} | récupérés=${payload.retrieval_count || 0} | preuves LLM=${payload.prompt_citation_count || 0} | relations graphe=${payload.graph_context_count || 0} | sources affichées=${(payload.sources || []).length}`
+          ? `route=${payload.route} | analyse=${(payload.query_analysis || {}).method || 'n/a'} | récupérés=${payload.retrieval_count || 0} | preuves LLM=${payload.prompt_citation_count || 0} | relations graphe=${payload.graph_context_count || 0} | sources affichées=${(payload.sources || []).length}`
           : '';
         addMessage('assistant', payload.answer, 'assistant', payload.prompt_url, payload.sources_markdown, meta);
         if (payload.sources && payload.sources.length) {
@@ -390,6 +390,7 @@ def answer_question_payload(
         "retrieval_count": response.retrieval_count,
         "prompt_citation_count": response.prompt_citation_count,
         "graph_context_count": len(getattr(response, "graph_context", [])),
+        "query_analysis": getattr(response, "query_analysis", {}),
     }
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex

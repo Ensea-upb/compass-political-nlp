@@ -7,6 +7,7 @@
 - chunking parent/enfant avec embeddings multilingues, titres, paragraphes et repli déterministe ;
 - mémoire structurée SQLite et mémoire documentaire ChromaDB ;
 - retrieval dense + BM25, contexte parent et reranking cross-encoder ;
+- analyse structurée de la question, sous-requêtes LLM et fallback déterministe ;
 - ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF original est bloqué ;
 - serveur vLLM local open-weight sur Onyxia ;
 - chat avec citations `[Sx]`, contexte analytique, inspection du prompt et fallback extractif ;

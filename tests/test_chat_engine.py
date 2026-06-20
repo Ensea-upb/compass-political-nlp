@@ -8,7 +8,6 @@ from compass.chat.engine import (
     build_citations,
     build_general_context_items,
     build_messages,
-    build_retrieval_query,
     compact_history,
     extract_segment_ids,
     format_citations,
@@ -194,6 +193,46 @@ def test_chat_engine_prefers_hybrid_retrieval(monkeypatch):
 
     assert memory.hybrid_called is True
     assert memory.hybrid_general_called is True
+
+
+def test_chat_engine_uses_structured_llm_subqueries(monkeypatch):
+    class QueryMemory(FakeMemory):
+        def __init__(self):
+            self.queries = []
+
+        def query_documents(self, question, as_of, k=12, party_id=None, include_unverified=False):
+            self.queries.append(question)
+            return super().query_documents(question, as_of, k, party_id, include_unverified)
+
+    def fake_complete(model_name, messages, **kwargs):
+        if kwargs.get("response_format"):
+            return (
+                '{"actors":["Test Party"],"themes":["constitutional reform"],'
+                '"period":null,"answer_type":"position","language":"en",'
+                '"subqueries":["constitutional reform institutions",'
+                '"constitutional change commitments evidence"]}'
+            )
+        assert "QUESTION_ANALYSIS" in messages[-1]["content"]
+        return "The party supports democratic accountability [S1]."
+
+    memory = QueryMemory()
+    monkeypatch.setattr(chat_engine, "complete_chat", fake_complete)
+    response = ChatEngine(memory, model_name="local-test-model").ask(
+        ChatRequest(
+            question="What does this party say about constitutional reform?",
+            as_of=date(2009, 9, 27),
+            party_id="P100",
+        )
+    )
+
+    evidence_queries = [query for query in memory.queries if "manifesto overall" not in query]
+    assert evidence_queries == [
+        "What does this party say about constitutional reform?",
+        "constitutional reform institutions",
+        "constitutional change commitments evidence",
+    ]
+    assert response.query_analysis["method"] == "llm"
+    assert response.query_analysis["themes"] == ["constitutional reform"]
 
 
 def test_chat_injects_inferred_graph_context_for_relational_questions(monkeypatch):
@@ -590,14 +629,6 @@ def test_follow_up_sources_uses_structured_previous_citations():
     assert response.route == "FOLLOW_UP_SOURCES"
     assert "Stored proof" in response.answer
     assert response.citations[0].segment_id == "doc1:p000c000"
-
-
-def test_economic_retrieval_query_adds_priority_terms():
-    query = build_retrieval_query("What are the economic priorities?")
-
-    assert "employment" in query
-    assert "wages" in query
-    assert "innovation" in query
 
 
 def test_general_context_is_added_without_becoming_cited_evidence(monkeypatch):

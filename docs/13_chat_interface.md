@@ -97,13 +97,17 @@ Le mode de routage ne change pas la politique de validation : celle-ci dépend d
 
 ## Retrieval
 
-Pour une question politique, `CountryMemory.query_documents_hybrid()` :
+Pour une question politique, COMPASS commence par produire un plan de recherche structuré : acteurs, thèmes, période, type de réponse, langue et deux à quatre sous-requêtes. Le LLM local est utilisé avec `response_format=json_object` et une validation Pydantic stricte. Si cette étape échoue, un analyseur déterministe général prend le relais. Les anciennes expansions écrites à la main pour quelques thèmes ont été supprimées.
+
+Chaque sous-requête appelle ensuite `CountryMemory.query_documents_hybrid()` :
 
 1. récupère des candidats par embeddings Chroma ;
 2. renforce les correspondances lexicales avec BM25 ;
 3. rattache le contexte parent aux segments enfants ;
 4. applique `BAAI/bge-reranker-v2-m3` sur la paire question / parent + enfant ;
 5. transmet les meilleurs enfants comme preuves citables.
+
+Les classements des sous-requêtes sont fusionnés par Reciprocal Rank Fusion. Un même segment ne peut apparaître qu'une fois dans le paquet final.
 
 ## Structure du prompt
 
@@ -197,6 +201,9 @@ export COMPASS_CHAT_MAX_PROMPT_CITATIONS=4
 export COMPASS_CHAT_MAX_EVIDENCE_TEXT_CHARS=420
 export COMPASS_CHAT_SEMANTIC_VALIDATION_ENABLED=false
 export COMPASS_CHAT_NLI_ENTAILMENT_THRESHOLD=0.65
+export COMPASS_CHAT_QUERY_ANALYSIS_ENABLED=true
+export COMPASS_CHAT_QUERY_ANALYSIS_MAX_TOKENS=300
+export COMPASS_CHAT_QUERY_ANALYSIS_MAX_SUBQUERIES=4
 ```
 
 ## Lancement actuel

@@ -21,7 +21,13 @@ Les fragments trop courts sont fusionnés et les fragments trop longs sont divis
 
 La rupture thématique repose sur des embeddings multilingues calculés en une passe sur les unités du document. Le pipeline compare l'unité suivante au contexte récent du parent et ouvre un nouveau parent lorsque leur similarité cosinus devient trop faible. Si le modèle d'embeddings est absent ou échoue, un repli lexical déterministe maintient l'ingestion sans masquer l'incident dans les journaux.
 
-### 3. Retrieval
+### 3. Analyse de la question
+
+Avant toute recherche, le chat produit une représentation structurée de la demande : acteurs, thèmes, période, type de réponse, langue et sous-requêtes complémentaires. Le LLM local doit retourner un objet JSON strict et n'est jamais autorisé à répondre à la question pendant cette étape. Un JSON invalide, un serveur indisponible ou un acteur inventé déclenche une analyse déterministe sans dictionnaire thématique spécialisé.
+
+La question originale reste toujours la première requête afin de préserver les termes exacts de l'utilisateur. Les reformulations ajoutent des angles conceptuels et orientés vers les preuves sans introduire de position politique supposée.
+
+### 4. Retrieval
 
 La recherche combine :
 
@@ -34,7 +40,7 @@ recherche dense ChromaDB
 → reranking cross-encoder
 ```
 
-### 4. Construction du prompt
+### 5. Construction du prompt
 
 Le prompt distingue :
 
@@ -42,11 +48,11 @@ Le prompt distingue :
 - `GENERAL_CONTEXT` : contexte documentaire non citable ;
 - `CITED_EVIDENCE` : seules preuves autorisées, référencées par `[Sx]`.
 
-### 5. Génération et validation
+### 6. Génération et validation
 
 Le LLM produit une réponse courte et sourcée. `AnswerValidator` applique une politique dépendante de la route : validation stricte pour une question politique, aucune exigence `[Sx]` pour une réponse déterministe de périmètre ou un lookup direct.
 
-### 6. Dégradation contrôlée
+### 7. Dégradation contrôlée
 
 Si vLLM est indisponible, si le prompt est refusé ou si la réponse enfreint le contrat de citation, le chat retourne une réponse extractive construite à partir des passages récupérés.
 

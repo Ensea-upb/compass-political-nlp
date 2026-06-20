@@ -144,6 +144,9 @@ class CompassSettings(LLMConfig):
     chat_max_evidence_text_chars: int = 420
     chat_semantic_validation_enabled: bool = False
     chat_nli_entailment_threshold: float = 0.65
+    chat_query_analysis_enabled: bool = True
+    chat_query_analysis_max_tokens: int = Field(default=300, ge=100, le=800)
+    chat_query_analysis_max_subqueries: int = Field(default=4, ge=2, le=5)
 
     search_max_queries: int = 8
     search_max_iterations: int = 2

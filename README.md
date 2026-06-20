@@ -101,6 +101,7 @@ Le dépôt implémente notamment :
 - le chunking hiérarchique parent/enfant avec embeddings multilingues, titres et provenance structurelle ;
 - l'indexation par pays dans ChromaDB ;
 - le retrieval dense + BM25 et le reranking cross-encoder ;
+- l'analyse structurée des questions par LLM local, avec JSON strict, sous-requêtes et fallback déterministe ;
 - l'ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF est bloqué ;
 - un chat RAG avec citations `[Sx]`, page d'inspection du prompt, routage sélectionnable et validation dépendante de la route ;
 - une façade scientifique du chat vers `CompassRunner` via `/analyse <variable_id>`, avec validation C14 séparée ;

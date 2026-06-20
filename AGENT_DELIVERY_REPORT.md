@@ -55,6 +55,17 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - titres de section, plages de paragraphes et ordre des segments sont conservés dans les schémas puis persistés dans Chroma ;
 - document, parti, date et langue continuent de provenir du même `DocumentMeta` traçable.
 
+## Compréhension de la question avant retrieval
+
+- chaque question documentaire est représentée par ses acteurs, thèmes, période, type de réponse et langue ;
+- le LLM local produit un JSON strict et deux à quatre sous-requêtes sans répondre à la question ;
+- la question originale reste toujours présente pour conserver ses termes exacts ;
+- les acteurs proposés par le LLM sont limités à ceux du corpus actif ou explicitement écrits par l'utilisateur ;
+- un analyseur déterministe et indépendant des thèmes politiques prend le relais en cas d'échec ;
+- les anciennes expansions économiques écrites à la main ont été supprimées ;
+- les résultats des sous-requêtes sont dédupliqués et fusionnés par Reciprocal Rank Fusion ;
+- la page du prompt affiche le plan réellement utilisé avant le retrieval.
+
 ## Intégration du graphe politique
 
 - l'ingestion PDF ou `texts_and_annotations` appelle désormais `PoliticalGraph.ingest()` puis `save()` ;
@@ -82,7 +93,7 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 
 ```text
 python -m pytest -q
-136 passed
+143 passed
 
 ruff check src apps tests examples scripts
 All checks passed!
