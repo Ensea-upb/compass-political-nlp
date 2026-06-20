@@ -104,6 +104,7 @@ except ImportError:
         def __init__(self):
             self._nodes = {}
             self._edges = {}
+            self.graph = {}
             self.nodes = _NodeView(self)
             self.edges = _EdgeView(self)
 

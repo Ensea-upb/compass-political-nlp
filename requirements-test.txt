@@ -3,6 +3,7 @@
 # Imports required by the lightweight integration tests.
 # Heavy services/models are stubbed in tests/conftest.py.
 pandas>=2.1
+scipy>=1.11
 pytesseract>=0.3.10
 Pillow>=10.0
 ruff>=0.5
