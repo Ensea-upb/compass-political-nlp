@@ -1018,12 +1018,12 @@ def build_messages(
         "- Label direct declarations as explicit and multi-source interpretations as cautious synthesis.\n"
         "- Do not cite [A], [C1], [R1], or other analytical/general/relational-context labels.\n"
         "- If no [S] passage supports the answer, say evidence is insufficient.\n"
-        "- If evidence is weak or absent, say so explicitly.\n\n"
-        "Format example (not real evidence, illustrates citation style only):\n"
-        "Question: What does the party say about taxation?\n"
-        "Correct answer: The party calls for lower payroll taxes on low incomes [S1]. "
-        "Taken together, the cited passages suggest this is framed as a fairness measure [S1][S2].\n"
-        "Wrong answer (missing citations): The party calls for lower payroll taxes on low incomes. "
+        "- If evidence is weak or absent, say so explicitly.\n"
+        "- Do not repeat or restate the question text in your answer; begin directly with the substantive claim.\n\n"
+        "Citation style, illustrated on an unrelated topic (do not reuse this wording or copy any question text):\n"
+        "Correct: The party calls for lower payroll taxes on low incomes [S1]. Taken together, the cited "
+        "passages suggest this is framed as a fairness measure [S1][S2].\n"
+        "Incorrect (missing citations): The party calls for lower payroll taxes on low incomes. "
         "This is framed as a fairness measure."
     )
     history = compact_history(
@@ -1631,6 +1631,17 @@ def strip_appended_sources(answer: str) -> str:
     return stripped
 
 
+_ECHOED_LABEL_RE = re.compile(
+    r"^\s*(question|réponse|reponse|answer)\s*:\s*.*?(?:\n+|$)",
+    flags=re.IGNORECASE,
+)
+
+
+def strip_echoed_question_label(answer: str) -> str:
+    """Drop a leading 'Question:'/'Réponse:' line some local models echo from the prompt."""
+    return _ECHOED_LABEL_RE.sub("", answer.strip(), count=1).strip()
+
+
 def generate_validated_answer(
     *,
     model_name: str,
@@ -1654,7 +1665,7 @@ def generate_validated_answer(
             )
             if not raw:
                 raise AnswerContractError("empty answer")
-            answer = strip_appended_sources(raw)
+            answer = strip_echoed_question_label(strip_appended_sources(raw))
             try:
                 validate_llm_answer(answer, citations, route=route)
             except Exception as syntax_exc:
