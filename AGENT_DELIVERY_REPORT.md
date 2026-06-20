@@ -18,8 +18,8 @@ Les corrections logiques et de démonstration demandées ont été intégrées s
 - sources précédentes transportées sous forme structurée dans le payload, sans extraction fragile depuis le texte de la réponse ;
 - payload enrichi avec `sources_markdown`, `route`, `retrieval_count` et `prompt_citation_count` ;
 - distinction visible entre candidats récupérés, preuves envoyées au LLM et sources affichées ;
-- seuil d'extrait porté à 420 caractères et rendu configurable ;
-- validation NLI optionnelle ajoutée derrière un drapeau, désactivée par défaut ;
+- budgets d'extraits rendus configurables puis adaptés automatiquement à la fenêtre vLLM ;
+- validation NLI optionnelle initialement ajoutée, désormais activée avec une réparation contrôlée ;
 - sélecteur de routage LLM masqué par défaut et disponible avec `--debug-routing` ;
 - bandeau du corpus actif et exemples de questions ajoutés à l'interface.
 
@@ -66,6 +66,20 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 - les résultats des sous-requêtes sont dédupliqués et fusionnés par Reciprocal Rank Fusion ;
 - la page du prompt affiche le plan réellement utilisé avant le retrieval.
 
+## RAG expert et validation réparatrice
+
+- dense + BM25 et cross-encoder sont exécutés pour chaque sous-requête ;
+- le parent est injecté avant le reranking et contrôlé contre le périmètre de l'enfant ;
+- les classements sont fusionnés, dédupliqués et diversifiés ;
+- les preuves principales, nuances et contre-preuves candidates sont recherchées séparément ;
+- pays, parti, élection, date et statut temporel sont revérifiés après le retrieval ;
+- le contexte général passe d'un extrait court à trois parents de sections distinctes ;
+- le budget du prompt s'adapte à la fenêtre maximale déclarée pour vLLM ;
+- chaque affirmation politique exige `[Sx]` et une validation NLI phrase par phrase ;
+- une réponse rejetée bénéficie d'une réparation avec les mêmes preuves, sans nouveau retrieval ;
+- `retrieval_trace` et `validation_trace` sont exposées dans la réponse et la page du prompt ;
+- `evaluation/rag_reference_questions.json` et `scripts/evaluate_chat_rag.py` fournissent des snapshots comparables.
+
 ## Intégration du graphe politique
 
 - l'ingestion PDF ou `texts_and_annotations` appelle désormais `PoliticalGraph.ingest()` puis `save()` ;
@@ -93,7 +107,7 @@ Les routes de périmètre sont consultatives : elles décrivent les données dis
 
 ```text
 python -m pytest -q
-143 passed
+152 passed
 
 ruff check src apps tests examples scripts
 All checks passed!
@@ -109,7 +123,7 @@ Une recherche explicite dans `src/` et `apps/` a également vérifié l'absence 
 
 ## Risques restants
 
-1. La validation NLI est désactivée par défaut. Son activation augmente le contrôle sémantique mais peut produire des faux négatifs et augmenter la latence.
+1. La validation NLI est activée par défaut. Elle augmente le contrôle sémantique mais peut produire des faux négatifs et ajoute de la latence ; la réparation limite les fallbacks immédiats.
 2. Le détecteur déterministe de comparaison s'appuie sur les partis connus de la mémoire et sur la forme de la question. Le mode LLM reste disponible pour diagnostic, pas comme dépendance obligatoire.
 3. La démonstration États-Unis nécessite toujours l'ingestion réelle d'un corpus USA sur Onyxia. Elle n'est pas vérifiable depuis cet environnement sans accès à l'API Manifesto et aux données persistées.
 4. `chat_gradio.py` reste un prototype optionnel. L'interface recommandée est `chat_web.py`.

@@ -1,0 +1,76 @@
+[
+  {
+    "id": "democracy_position",
+    "question": "Que dit le parti sur la démocratie ? Réponds en français.",
+    "expected_evidence_terms": ["democracy", "democratic"],
+    "expected_answer_type": "position"
+  },
+  {
+    "id": "democracy_evidence",
+    "question": "Donne les preuves exactes de sa position sur la participation démocratique.",
+    "expected_evidence_terms": ["participation", "democratic"],
+    "expected_answer_type": "evidence"
+  },
+  {
+    "id": "economy_priorities",
+    "question": "Quelles sont les principales priorités économiques du parti ?",
+    "expected_evidence_terms": ["economic", "employment", "market", "industry"],
+    "expected_answer_type": "list"
+  },
+  {
+    "id": "europe_position",
+    "question": "Quelle position le manifeste adopte-t-il sur l'intégration européenne ?",
+    "expected_evidence_terms": ["Europe", "European", "Union"],
+    "expected_answer_type": "position"
+  },
+  {
+    "id": "environment_instruments",
+    "question": "Quels instruments le parti propose-t-il pour la transition écologique ?",
+    "expected_evidence_terms": ["energy", "ecological", "climate", "sustainable"],
+    "expected_answer_type": "list"
+  },
+  {
+    "id": "social_policy",
+    "question": "Comment le manifeste relie-t-il travail, salaires et justice sociale ?",
+    "expected_evidence_terms": ["work", "wages", "social"],
+    "expected_answer_type": "explanation"
+  },
+  {
+    "id": "migration",
+    "question": "Que propose le parti en matière de migration et d'intégration ?",
+    "expected_evidence_terms": ["migration", "integration", "immigration"],
+    "expected_answer_type": "position"
+  },
+  {
+    "id": "foreign_policy",
+    "question": "Quelles orientations de politique étrangère apparaissent dans le manifeste ?",
+    "expected_evidence_terms": ["international", "foreign", "peace", "Europe"],
+    "expected_answer_type": "list"
+  },
+  {
+    "id": "institutional_limits",
+    "question": "Le manifeste pose-t-il des limites ou des conditions à ses réformes institutionnelles ?",
+    "expected_evidence_terms": ["constitutional", "parliament", "democratic"],
+    "expected_answer_type": "evidence"
+  },
+  {
+    "id": "counter_evidence",
+    "question": "Existe-t-il dans le manifeste des passages qui nuancent sa position sur la démocratie directe ?",
+    "expected_evidence_terms": ["democracy", "direct", "participation"],
+    "expected_answer_type": "evidence"
+  },
+  {
+    "id": "unsupported_motive",
+    "question": "Pourquoi les dirigeants du parti ont-ils secrètement choisi cette stratégie ?",
+    "expected_evidence_terms": [],
+    "expected_answer_type": "explanation",
+    "expect_cautious_or_abstain": true
+  },
+  {
+    "id": "outside_knowledge",
+    "question": "En utilisant uniquement le corpus, indique ce qu'il permet d'établir sur les résultats électoraux futurs.",
+    "expected_evidence_terms": [],
+    "expected_answer_type": "evidence",
+    "expect_cautious_or_abstain": true
+  }
+]

@@ -107,7 +107,15 @@ Chaque sous-requête appelle ensuite `CountryMemory.query_documents_hybrid()` :
 4. applique `BAAI/bge-reranker-v2-m3` sur la paire question / parent + enfant ;
 5. transmet les meilleurs enfants comme preuves citables.
 
-Les classements des sous-requêtes sont fusionnés par Reciprocal Rank Fusion. Un même segment ne peut apparaître qu'une fois dans le paquet final.
+Les classements des sous-requêtes sont fusionnés par Reciprocal Rank Fusion. Un même segment ne peut apparaître qu'une fois dans le paquet final. Une diversification limite les quasi-doublons et évite de remplir les premières sources avec plusieurs enfants du même parent.
+
+Trois lanes sont exécutées :
+
+- `primary` : preuves répondant directement à la question ;
+- `nuance` : conditions, limites, exceptions et ambiguïtés ;
+- `counter` : passages susceptibles de contredire ou de limiter la conclusion.
+
+Le rôle `counter` indique une recherche de contre-preuve, pas une contradiction déjà établie. Le LLM ne peut parler de contradiction que si le texte la montre réellement. Après fusion, chaque segment est revérifié contre le pays, le parti, l'élection, la date et le statut temporel actifs.
 
 ## Structure du prompt
 
@@ -117,6 +125,8 @@ Le prompt distingue quatre blocs :
 - `GENERAL_CONTEXT` : contexte documentaire général, non citable ;
 - `RELATIONAL_CONTEXT` : relations de cooccurrence issues du graphe, explicitement inférées et non citables ;
 - `CITED_EVIDENCE` : passages `[S1]`, `[S2]`, etc., seuls autorisés à soutenir une affirmation.
+
+Il expose également `QUESTION_ANALYSIS` et `RETRIEVAL_TRACE`, tous deux non citables. Les preuves citables sont séparées en trois sous-blocs : `PRIMARY_EVIDENCE`, `NUANCE_EVIDENCE` et `COUNTER_EVIDENCE_CANDIDATES`.
 
 Chaque preuve contient son pays, son parti, sa date, son type de document, la raison de retrieval et un extrait.
 
@@ -128,11 +138,11 @@ Le profil opérationnel distingue trois quantités affichées sous chaque répon
 - `prompt_citation_count` : preuves réellement transmises au LLM ;
 - sources affichées : exactement les preuves que le LLM a reçues, jamais les candidats supplémentaires.
 
-Le prompt est limité à :
+Le budget du prompt est calculé depuis `COMPASS_CHAT_LLM_CONTEXT_WINDOW`. Il réserve les tokens de sortie, puis répartit l'espace disponible entre :
 
-- 4 preuves ;
-- 1 bloc de contexte général ;
-- des extraits de preuve configurables, à 420 caractères par défaut ;
+- 4 preuves réparties entre les trois lanes ;
+- jusqu'à 3 parents de contexte général provenant de sections différentes ;
+- les extraits de preuve et leur contexte parent ;
 - 1 message d'historique compact ;
 - 350 tokens de sortie.
 
@@ -151,7 +161,7 @@ Une réponse d'insuffisance peut ne pas contenir de citation. En cas de rejet, l
 
 La règle closed-world interdit également de transformer une absence de preuve en preuve d'absence. Si les extraits ne mentionnent qu'un acteur, le modèle peut constater cette limite mais ne peut pas conclure que cet acteur était le seul.
 
-Une vérification NLI phrase-preuve peut être activée avec `COMPASS_CHAT_SEMANTIC_VALIDATION_ENABLED=true`. Elle est désactivée par défaut, car un modèle NLI générique peut produire des faux négatifs sur des paraphrases politiques valides. En cas d'échec lorsqu'elle est activée, le système retourne le fallback extractif.
+La vérification NLI phrase-preuve est activée par défaut. Chaque affirmation est confrontée aux sources qu'elle cite. Si plusieurs sources sont citées, le système vérifie aussi leur combinaison. Une affirmation rejetée déclenche une réécriture avec les mêmes preuves ; aucun nouveau document n'est récupéré. Après épuisement du budget de réparation, le système retourne le fallback extractif. `validation_trace` conserve les affirmations acceptées et rejetées.
 
 ## Inspection du prompt
 
@@ -198,9 +208,15 @@ export COMPASS_HF_DEVICE=cpu
 export COMPASS_RERANK_ENABLED=true
 export COMPASS_RERANK_POOL_SIZE=24
 export COMPASS_CHAT_MAX_PROMPT_CITATIONS=4
-export COMPASS_CHAT_MAX_EVIDENCE_TEXT_CHARS=420
+export COMPASS_CHAT_MAX_EVIDENCE_TEXT_CHARS=700
 export COMPASS_CHAT_SEMANTIC_VALIDATION_ENABLED=false
 export COMPASS_CHAT_NLI_ENTAILMENT_THRESHOLD=0.65
+export COMPASS_CHAT_REPAIR_MAX_ATTEMPTS=1
+export COMPASS_CHAT_LLM_CONTEXT_WINDOW=4096
+export COMPASS_CHAT_PROMPT_RESERVED_OUTPUT_TOKENS=500
+export COMPASS_CHAT_MAX_RETRIEVAL_TRACE_CHARS=1400
+export COMPASS_CHAT_GENERAL_CONTEXT_ITEMS=3
+export COMPASS_CHAT_STRICT_ELECTION_SCOPE=true
 export COMPASS_CHAT_QUERY_ANALYSIS_ENABLED=true
 export COMPASS_CHAT_QUERY_ANALYSIS_MAX_TOKENS=300
 export COMPASS_CHAT_QUERY_ANALYSIS_MAX_SUBQUERIES=4

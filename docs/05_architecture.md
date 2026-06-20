@@ -49,7 +49,9 @@ Un fichier GraphML distinct est utilisé par pays. Les identifiants de segments 
 
 ## Chunking et retrieval
 
-Le document est découpé en parents contextuels et enfants citables. Les frontières thématiques sont détectées par embeddings multilingues, avec un repli lexical déterministe. Chaque segment conserve le titre de section, sa plage de paragraphes et son ordre, ainsi que les métadonnées documentaires. Le chat recherche les enfants, rattache leur parent, fusionne dense et BM25, puis applique le cross-encoder configuré.
+Le document est découpé en parents contextuels et enfants citables. Les frontières thématiques sont détectées par embeddings multilingues, avec un repli lexical déterministe. Chaque segment conserve le titre de section, sa plage de paragraphes et son ordre, ainsi que les métadonnées documentaires.
+
+Le chat exécute dense + BM25 pour chaque sous-requête, rattache le parent avant le cross-encoder, fusionne les classements et diversifie les segments. Les preuves principales, nuances et contre-preuves candidates restent séparées. Un dernier filtre de périmètre interdit le mélange de pays, partis, élections ou périodes. La génération est suivie d'une validation syntaxique et NLI ; une réparation contrôlée utilise le même paquet de preuves avant tout fallback.
 
 ## Chat
 

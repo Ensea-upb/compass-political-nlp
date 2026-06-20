@@ -38,6 +38,7 @@ def _meta(**kw):
         eligible_for_historical_reasoning=True,
         doc_type=kw.get("doc_type", "manifeste"),
         language="fr",
+        election_id=kw.get("election_id"),
         reliability=SourceReliability.OFFICIAL,
     )
 
@@ -293,6 +294,7 @@ class TestGap1_HierarchicalChunking:
         CHROMA_COL.upsert.reset_mock()
         memory = _country_memory()
         segment = _seg("Evidence.", seg_id="doc:p000c000", parent_id="doc:p000")
+        segment.meta.election_id = "SEN_2024"
         segment.chunk_index = 4
         segment.paragraph_start = 7
         segment.paragraph_end = 8
@@ -305,6 +307,7 @@ class TestGap1_HierarchicalChunking:
         assert metadata["paragraph_start"] == 7
         assert metadata["paragraph_end"] == 8
         assert metadata["section_title"] == "Democracy"
+        assert metadata["election_id"] == "SEN_2024"
 
     def test_country_memory_describes_the_indexed_corpus(self):
         from tests.conftest import CHROMA_COL
@@ -392,8 +395,9 @@ class TestGap1_HierarchicalChunking:
         assert {item["segment_id"] for item in result} == {"dense:p000c000", "lex:p000c000"}
         assert all("hybrid_score" in item for item in result)
 
-    def test_query_documents_hybrid_boosts_direct_democracy_evidence(self):
+    def test_query_documents_hybrid_uses_generic_cross_encoder(self, monkeypatch):
         from tests.conftest import CHROMA_COL
+        from compass import country_memory
 
         memory = _country_memory()
         CHROMA_COL.query.reset_mock()
@@ -415,11 +419,23 @@ class TestGap1_HierarchicalChunking:
             ],
         }
 
-        result = memory.query_documents_hybrid("What does the party say about democracy?", as_of=date(2024, 3, 24), party_id="pd_sen", k=2)
+        def fake_scores(question, records):
+            return [
+                0.9 if "Democratic participation" in item["text"] else 0.1
+                for item in records
+            ]
+
+        monkeypatch.setattr(country_memory, "_cross_encoder_scores", fake_scores)
+        result = memory.query_documents_hybrid(
+            "What does the party say about democracy?",
+            as_of=date(2024, 3, 24),
+            party_id="pd_sen",
+            k=2,
+        )
 
         assert result[0]["segment_id"] == "direct:p000c000"
-        assert "profile_boost" in result[0]["retrieval_reason"]
-        assert "profile_missing_direct_terms" in result[1]["retrieval_reason"]
+        assert "cross_encoder_score=0.9000" in result[0]["retrieval_reason"]
+        assert "profile_boost" not in result[0]["retrieval_reason"]
 
     def test_query_documents_hybrid_cross_encoder_reads_parent_context(self, monkeypatch):
         from tests.conftest import CHROMA_COL

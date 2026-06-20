@@ -141,9 +141,21 @@ class CompassSettings(LLMConfig):
 
     # --- Chat RAG : budgets de preuve et garde-fou sémantique optionnel ---
     chat_max_prompt_citations: int = 4
-    chat_max_evidence_text_chars: int = 420
-    chat_semantic_validation_enabled: bool = False
+    chat_max_evidence_text_chars: int = 700
+    chat_max_parent_context_chars: int = 420
+    chat_general_context_items: int = 3
+    chat_max_general_context_chars: int = 650
+    chat_llm_context_window: int = Field(default=4096, ge=4096)
+    chat_prompt_reserved_output_tokens: int = Field(default=500, ge=200)
+    chat_prompt_chars_per_token: float = Field(default=3.5, ge=2.0, le=6.0)
+    chat_max_retrieval_trace_chars: int = Field(default=1400, ge=400, le=4000)
+    chat_semantic_validation_enabled: bool = True
     chat_nli_entailment_threshold: float = 0.65
+    chat_repair_max_attempts: int = Field(default=1, ge=0, le=2)
+    chat_retrieval_lane_k: int = Field(default=8, ge=2, le=30)
+    chat_retrieval_diversity_threshold: float = Field(default=0.78, ge=0.3, le=1.0)
+    chat_retrieval_min_sufficiency: float = Field(default=0.35, ge=0.0, le=1.0)
+    chat_strict_election_scope: bool = True
     chat_query_analysis_enabled: bool = True
     chat_query_analysis_max_tokens: int = Field(default=300, ge=100, le=800)
     chat_query_analysis_max_subqueries: int = Field(default=4, ge=2, le=5)

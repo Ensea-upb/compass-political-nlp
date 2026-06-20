@@ -42,39 +42,6 @@ logger = logging.getLogger(__name__)
 _RERANKER = None
 _RERANKER_UNAVAILABLE = False
 
-_QUESTION_PROFILES = {
-    "democracy": {
-        "triggers": {
-            "democracy", "democratic", "democratie", "democratique",
-            "citizen", "citizens", "participation", "parliament",
-            "election", "elections", "constitutional", "constitution",
-            "rights", "freedom", "liberty", "rule", "law",
-        },
-        "strong": {
-            "democracy", "democratic", "democratie", "democratique",
-            "parliament", "participation", "citizens", "constitutional",
-            "elections", "rights", "freedom", "rule", "law",
-        },
-        "weak": {
-            "sustainability", "sustainable", "culture", "art", "market",
-            "future", "ecological", "environmental",
-        },
-    },
-    "economy": {
-        "triggers": {
-            "economy", "economic", "economie", "emploi", "wages",
-            "salary", "industry", "exports", "innovation", "growth",
-            "tax", "taxation", "market", "jobs",
-        },
-        "strong": {
-            "employment", "jobs", "wages", "salary", "industry",
-            "exports", "innovation", "tax", "taxation", "growth",
-            "market", "economy", "economic",
-        },
-        "weak": {"culture", "art", "identity"},
-    },
-}
-
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS elections (
     election_id TEXT PRIMARY KEY, country_iso3 TEXT NOT NULL,
@@ -173,6 +140,7 @@ class CountryMemory:
                 "language": s.meta.language,
                 "doc_id": s.doc_id,
                 "country_iso3": s.meta.country_iso3,
+                "election_id": s.meta.election_id or "",
                 # Gap 1 — chunking hiérarchique : lien enfant → parent
                 "parent_segment_id": s.parent_segment_id or "",
                 "segment_level": "child" if s.parent_segment_id else "parent",
@@ -391,6 +359,36 @@ class CountryMemory:
         hybrid_pool = _hybrid_rank(question, candidates, dense, k=rerank_pool_size)
         return _cross_encoder_rerank(question, self._inject_parent_text(hybrid_pool), k)
 
+    def query_parent_documents_hybrid(
+        self,
+        question: str,
+        as_of: date,
+        k: int = 6,
+        party_id: str | None = None,
+        include_unverified: bool = False,
+    ) -> list[dict]:
+        """Hybrid retrieval restricted to parent chunks for general context."""
+        clauses = self._document_clauses(
+            as_of=as_of,
+            party_id=party_id,
+            include_unverified=include_unverified,
+            include_parent_segments=True,
+        )
+        clauses.append({"segment_level": "parent"})
+        dense_result = self._query_chroma(question, max(k * 4, 16), clauses)
+        dense = [
+            {"segment_id": sid, "text": document, "meta": metadata or {}}
+            for sid, document, metadata in zip(
+                dense_result.get("ids", [[]])[0],
+                dense_result.get("documents", [[]])[0],
+                dense_result.get("metadatas", [[]])[0],
+            )
+        ] if _has_results(dense_result) else []
+        lexical_pool = self._get_records(clauses, limit=max(k * 16, 80))
+        candidates = _dedupe_records(dense + lexical_pool)
+        hybrid_pool = _hybrid_rank(question, candidates, dense, k=max(k * 3, 12))
+        return _cross_encoder_rerank(question, hybrid_pool, k)
+
     def _query_chroma(self, question: str, k: int, clauses: list[dict]) -> dict:
         where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         return self._col.query(query_texts=[question], n_results=k, where=where)
@@ -438,14 +436,18 @@ class CountryMemory:
         })
         if not parent_ids:
             return records
-        parent_texts = self.fetch_by_ids(parent_ids)
+        parent_records = {
+            record["segment_id"]: record
+            for record in self.fetch_records_by_ids(parent_ids)
+        }
         out: list[dict] = []
         for record in records:
             enriched = dict(record)
             meta = record.get("meta") or {}
             parent_id = str(meta.get("parent_segment_id") or "")
-            if parent_id and parent_id in parent_texts:
-                enriched["parent_text"] = parent_texts[parent_id]
+            parent = parent_records.get(parent_id)
+            if parent and _same_document_scope(meta, parent.get("meta") or {}):
+                enriched["parent_text"] = parent.get("text") or ""
             out.append(enriched)
         return out
 
@@ -457,7 +459,6 @@ def _has_results(result: dict) -> bool:
 
 def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: int) -> list[dict]:
     query_tokens = _tokens(question)
-    profile = _question_profile(query_tokens)
     dense_rank = {item["segment_id"]: rank for rank, item in enumerate(dense, start=1)}
     bm25_rank: dict[str, int] = {}
     if query_tokens and candidates and BM25Okapi is not None:
@@ -476,8 +477,6 @@ def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: in
             score += 1.0 / (60 + dense_rank[sid])
         if sid in bm25_rank:
             score += 1.25 / (60 + bm25_rank[sid])
-        profile_score, profile_reason = _profile_score(item.get("text", ""), profile)
-        score += profile_score
         enriched = dict(item)
         enriched["hybrid_score"] = score
         enriched["dense_rank"] = dense_rank.get(sid)
@@ -485,7 +484,6 @@ def _hybrid_rank(question: str, candidates: list[dict], dense: list[dict], k: in
         enriched["retrieval_reason"] = _retrieval_reason(
             dense_rank.get(sid),
             bm25_rank.get(sid),
-            profile_reason,
         )
         ranked.append(enriched)
     return sorted(ranked, key=lambda item: float(item.get("hybrid_score") or 0.0), reverse=True)[:k]
@@ -572,41 +570,21 @@ def _lexical_overlap(query_tokens: list[str], text: str) -> float:
     return float(sum(1 for token in query_tokens if token in text_tokens))
 
 
-def _question_profile(query_tokens: list[str]) -> dict | None:
-    token_set = set(query_tokens)
-    for profile in _QUESTION_PROFILES.values():
-        if token_set & profile["triggers"]:
-            return profile
-    return None
-
-
-def _profile_score(text: str, profile: dict | None) -> tuple[float, str]:
-    if profile is None:
-        return 0.0, ""
-    tokens = set(_tokens(text))
-    strong_hits = tokens & profile["strong"]
-    weak_hits = tokens & profile["weak"]
-    score = 0.0
-    reasons: list[str] = []
-    if strong_hits:
-        score += min(0.08, 0.025 * len(strong_hits))
-        reasons.append("profile_boost=" + ",".join(sorted(strong_hits)[:5]))
-    if not strong_hits:
-        score -= 0.05
-        reasons.append("profile_missing_direct_terms")
-    if weak_hits and not strong_hits:
-        score -= 0.04
-        reasons.append("profile_indirect_terms=" + ",".join(sorted(weak_hits)[:5]))
-    return score, ";".join(reasons)
-
-
-def _retrieval_reason(dense_rank: int | None, bm25_rank: int | None, profile_reason: str) -> str:
+def _retrieval_reason(dense_rank: int | None, bm25_rank: int | None) -> str:
     parts: list[str] = []
     if dense_rank is not None:
         parts.append(f"dense_rank={dense_rank}")
     if bm25_rank is not None:
         parts.append(f"bm25_rank={bm25_rank}")
-    if profile_reason:
-        parts.append(profile_reason)
     return " | ".join(parts)
+
+
+def _same_document_scope(child: dict, parent: dict) -> bool:
+    """Prevent a malformed parent link from crossing corpus boundaries."""
+    for key in ("doc_id", "country_iso3", "party_id", "election_id", "language"):
+        child_value = str(child.get(key) or "")
+        parent_value = str(parent.get(key) or "")
+        if child_value and parent_value and child_value != parent_value:
+            return False
+    return str(parent.get("segment_level") or "parent") == "parent"
 

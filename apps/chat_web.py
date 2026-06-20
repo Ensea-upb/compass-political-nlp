@@ -391,6 +391,8 @@ def answer_question_payload(
         "prompt_citation_count": response.prompt_citation_count,
         "graph_context_count": len(getattr(response, "graph_context", [])),
         "query_analysis": getattr(response, "query_analysis", {}),
+        "retrieval_trace": getattr(response, "retrieval_trace", []),
+        "validation_trace": getattr(response, "validation_trace", []),
     }
     if prompt_store is not None and response.prompt_messages:
         prompt_id = uuid.uuid4().hex
@@ -459,7 +461,7 @@ def render_prompt_page(messages: list[dict[str, str]]) -> str:
   <main>
     <header>
       <h1>Prompt envoye au LLM</h1>
-      <p class="hint">Lecture humaine du prompt reellement transmis a vLLM. <code>ANALYTICAL_CONTEXT</code> donne le cadre conceptuel, <code>GENERAL_CONTEXT</code> donne le contexte documentaire et <code>RELATIONAL_CONTEXT</code> contient des cooccurrences inferees; seules les sources <code>[Sx]</code> dans <code>CITED_EVIDENCE</code> peuvent justifier les affirmations.</p>
+      <p class="hint">Lecture humaine du prompt réellement transmis à vLLM. <code>RETRIEVAL_TRACE</code> expose les étapes de sélection. <code>ANALYTICAL_CONTEXT</code>, <code>GENERAL_CONTEXT</code> et <code>RELATIONAL_CONTEXT</code> orientent la lecture ; seules les sources <code>[Sx]</code> des blocs de preuves peuvent justifier les affirmations.</p>
     </header>
     {cards}
     <details>
@@ -487,6 +489,10 @@ def _highlight_prompt_content(content: str) -> str:
         "ANALYTICAL_CONTEXT": "<mark>ANALYTICAL_CONTEXT</mark>",
         "GENERAL_CONTEXT": "<mark>GENERAL_CONTEXT</mark>",
         "RELATIONAL_CONTEXT": "<mark>RELATIONAL_CONTEXT</mark>",
+        "RETRIEVAL_TRACE": "<mark>RETRIEVAL_TRACE</mark>",
+        "PRIMARY_EVIDENCE": "<mark>PRIMARY_EVIDENCE</mark>",
+        "NUANCE_EVIDENCE": "<mark>NUANCE_EVIDENCE</mark>",
+        "COUNTER_EVIDENCE_CANDIDATES": "<mark>COUNTER_EVIDENCE_CANDIDATES</mark>",
         "CITED_EVIDENCE": "<mark>CITED_EVIDENCE</mark>",
         "Answer contract": "<mark>Answer contract</mark>",
     }

@@ -20,6 +20,11 @@ from compass.chat.query_analysis import (
     analyze_question,
     format_query_analysis,
 )
+from compass.chat.expert_retrieval import (
+    RetrievalBundle,
+    record_in_scope,
+    retrieve_expert,
+)
 from compass.llm_client import complete_chat
 
 _SEGMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*:p\d{3}(?:c\d{3})?")
@@ -35,10 +40,7 @@ _SCIENTIFIC_CONTAMINATION_RE = re.compile(
     r"^\s*/?(?:contamination|probe-contamination)\s+([A-Za-z0-9_.-]+)\s*$",
     flags=re.IGNORECASE,
 )
-_MAX_GENERAL_CONTEXT_ITEMS = 1
 _MAX_RELATIONAL_CONTEXT_ITEMS = 6
-_MAX_PARENT_CONTEXT_CHARS = 90
-_MAX_GENERAL_CONTEXT_CHARS = 150
 _MAX_ANALYTICAL_CONTEXT_CHARS = 420
 _MAX_CHAT_HISTORY_MESSAGES = 1
 _MAX_CHAT_HISTORY_CHARS = 160
@@ -153,8 +155,10 @@ class Citation:
     doc_date: str | None
     doc_type: str | None
     reliability: str | None
+    section_title: str | None = None
     parent_text: str | None = None
     retrieval_reason: str | None = None
+    evidence_role: str = "primary"
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,7 @@ class GeneralContext:
     party_id: str | None
     doc_date: str | None
     doc_type: str | None
+    section_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -185,10 +190,36 @@ class ChatResponse:
     route: str = "evidence_query"
     prompt_citation_count: int = 0
     query_analysis: dict[str, Any] = field(default_factory=dict)
+    retrieval_trace: list[dict[str, Any]] = field(default_factory=list)
+    validation_trace: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PromptBudget:
+    evidence_chars: int
+    parent_chars: int
+    general_chars: int
+    graph_chars: int
+    target_chars: int
 
 
 class AnswerContractError(RuntimeError):
     """Raised when an LLM answer violates COMPASS citation discipline."""
+
+
+class RepairExhaustedError(AnswerContractError):
+    def __init__(self, message: str, trace: list[dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.trace = trace
+
+
+@dataclass(frozen=True)
+class ClaimValidation:
+    claim: str
+    refs: list[str]
+    status: str
+    best_label: str | None = None
+    best_score: float = 0.0
 
 
 class ChatEngine:
@@ -478,29 +509,53 @@ class ChatEngine:
             model_name=self.model_name,
             complete=complete_chat,
         )
-        retrieved = query_evidence_multi(
+        retrieval = retrieve_expert(
             self.memory,
-            question_analysis.subqueries,
+            question_analysis,
+            query_function=query_evidence,
             as_of=request.as_of,
+            country_iso3=str(scope.get("country_iso3") or ""),
             k=request.k,
             party_id=request.party_id,
+            election_id=request.election_id,
             include_unverified=request.include_unverified,
         )
-        citations = build_citations(retrieved)
+        prompt_records = retrieval.prompt_records(settings.chat_max_prompt_citations)
+        prompt_records = attach_parent_context(self.memory, prompt_records)
+        citations = build_citations(prompt_records)
         if not citations:
             return ChatResponse(
                 answer="Aucun passage pertinent n'a ete trouve dans la memoire COMPASS pour cette question.",
                 citations=[],
                 model_used=None,
                 llm_used=False,
-                retrieval_count=0,
+                retrieval_count=retrieval.total_candidates,
                 route="evidence_query",
                 query_analysis=question_analysis.model_dump(),
+                retrieval_trace=retrieval.trace,
             )
-        retrieved = attach_parent_context(self.memory, retrieved)
-        all_citations = build_citations(retrieved)
-        citations = all_citations[:settings.chat_max_prompt_citations]
-        general_context = retrieve_general_context(self.memory, question, request, retrieved)
+        if retrieval.sufficiency < settings.chat_retrieval_min_sufficiency:
+            return ChatResponse(
+                answer=(
+                    "Les preuves récupérées sont insuffisantes pour produire une réponse "
+                    "politique fiable dans le périmètre actif."
+                ),
+                citations=citations,
+                model_used=None,
+                llm_used=False,
+                retrieval_count=retrieval.total_candidates,
+                route="evidence_query",
+                prompt_citation_count=len(citations),
+                query_analysis=question_analysis.model_dump(),
+                retrieval_trace=retrieval.trace,
+            )
+        general_context = retrieve_general_context(
+            self.memory,
+            question,
+            request,
+            prompt_records,
+            question_analysis,
+        )
         graph_context = retrieve_graph_context(self.graph, question, request, scope)
         messages = build_messages(
             question,
@@ -509,47 +564,48 @@ class ChatEngine:
             general_context,
             graph_context,
             question_analysis,
+            retrieval,
         )
         try:
-            answer = complete_chat(
-                self.model_name,
-                messages,
-                temperature=0.0,
-                max_tokens=min(settings.llm_max_tokens, _MAX_CHAT_OUTPUT_TOKENS),
+            answer, validation_trace, final_messages = generate_validated_answer(
+                model_name=self.model_name,
+                messages=messages,
+                citations=citations,
+                route=route,
+                complete=complete_chat,
             )
-            if not answer:
-                raise RuntimeError("Empty LLM response")
-            answer = strip_appended_sources(answer)
-            validate_llm_answer(answer, citations, route=route)
-            if settings.chat_semantic_validation_enabled:
-                validate_semantic_grounding(answer, citations)
             return ChatResponse(
                 answer=answer,
                 citations=citations,
                 model_used=self.model_name,
                 llm_used=True,
-                retrieval_count=len(retrieved),
+                retrieval_count=retrieval.total_candidates,
                 general_context=general_context,
                 graph_context=graph_context,
-                prompt_messages=messages,
+                prompt_messages=final_messages,
                 route=route,
                 prompt_citation_count=len(citations),
                 query_analysis=question_analysis.model_dump(),
+                retrieval_trace=retrieval.trace,
+                validation_trace=validation_trace,
             )
         except Exception as exc:
             fallback = build_extractive_answer(question, citations, exc)
+            validation_trace = list(getattr(exc, "trace", []))
             return ChatResponse(
                 answer=fallback,
                 citations=citations,
                 model_used=self.model_name,
                 llm_used=False,
-                retrieval_count=len(retrieved),
+                retrieval_count=retrieval.total_candidates,
                 general_context=general_context,
                 graph_context=graph_context,
                 prompt_messages=messages,
                 route=route,
                 prompt_citation_count=len(citations),
                 query_analysis=question_analysis.model_dump(),
+                retrieval_trace=retrieval.trace,
+                validation_trace=validation_trace,
             )
 
 
@@ -594,9 +650,11 @@ def build_citations(retrieved: list[dict[str, Any]]) -> list[Citation]:
                 party_id=_none_if_empty(meta.get("party_id")),
                 doc_date=_none_if_empty(meta.get("doc_date")),
                 doc_type=_none_if_empty(meta.get("doc_type")),
+                section_title=_none_if_empty(meta.get("section_title")),
                 reliability=_none_if_empty(meta.get("reliability")),
                 parent_text=_none_if_empty(item.get("parent_text")),
                 retrieval_reason=_none_if_empty(item.get("retrieval_reason")),
+                evidence_role=str(item.get("evidence_role") or "primary"),
             )
         )
     return citations
@@ -614,8 +672,10 @@ def citation_to_payload(citation: Citation) -> dict[str, Any]:
         "doc_date": citation.doc_date,
         "doc_type": citation.doc_type,
         "reliability": citation.reliability,
+        "section_title": citation.section_title,
         "parent_text": citation.parent_text,
         "retrieval_reason": citation.retrieval_reason,
+        "evidence_role": citation.evidence_role,
     }
 
 
@@ -633,8 +693,10 @@ def citations_from_payload(items: list[dict[str, Any]]) -> list[Citation]:
                 doc_date=_none_if_empty(item.get("doc_date")),
                 doc_type=_none_if_empty(item.get("doc_type")),
                 reliability=_none_if_empty(item.get("reliability")),
+                section_title=_none_if_empty(item.get("section_title")),
                 parent_text=_none_if_empty(item.get("parent_text")),
                 retrieval_reason=_none_if_empty(item.get("retrieval_reason")),
+                evidence_role=str(item.get("evidence_role") or "primary"),
             ))
         except (AttributeError, TypeError, ValueError):
             continue
@@ -713,48 +775,6 @@ def format_validation_report(report: Any) -> str:
     )
 
 
-def query_evidence_multi(
-    memory: Any,
-    queries: list[str],
-    *,
-    as_of: date,
-    k: int,
-    party_id: str | None,
-    include_unverified: bool,
-) -> list[dict[str, Any]]:
-    """Retrieve each complementary query and fuse rankings without duplicates."""
-    fused: dict[str, dict[str, Any]] = {}
-    scores: dict[str, float] = {}
-    matches: dict[str, list[int]] = {}
-    for query_index, query in enumerate(queries):
-        records = query_evidence(
-            memory,
-            query,
-            as_of=as_of,
-            k=k,
-            party_id=party_id,
-            include_unverified=include_unverified,
-        )
-        for rank, record in enumerate(records, start=1):
-            segment_id = str(record.get("segment_id") or "")
-            if not segment_id:
-                continue
-            fused.setdefault(segment_id, dict(record))
-            scores[segment_id] = scores.get(segment_id, 0.0) + 1.0 / (60 + rank)
-            matches.setdefault(segment_id, []).append(query_index + 1)
-    ranked = sorted(fused, key=lambda segment_id: (-scores[segment_id], segment_id))
-    output: list[dict[str, Any]] = []
-    for segment_id in ranked[:k]:
-        record = dict(fused[segment_id])
-        record["multi_query_score"] = scores[segment_id]
-        record["retrieval_reason"] = (
-            f"multi-query RRF; matched subqueries "
-            f"{','.join(str(index) for index in sorted(set(matches[segment_id])))}"
-        )
-        output.append(record)
-    return output
-
-
 def _scientific_unavailable_response(message: str, route: str) -> ChatResponse:
     return ChatResponse(
         answer=message,
@@ -821,28 +841,52 @@ def _format_document_dates(document_dates: list[str]) -> str:
 
 
 def build_general_context_items(records: list[dict[str, Any]], limit: int = 3) -> list[GeneralContext]:
-    items: list[GeneralContext] = []
     seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
     for item in records:
         segment_id = str(item.get("segment_id") or "")
         if not segment_id or segment_id in seen:
             continue
         seen.add(segment_id)
-        meta = item.get("meta") or {}
-        items.append(
-            GeneralContext(
-                ref_id=f"C{len(items) + 1}",
-                segment_id=segment_id,
-                text=str(item.get("text") or ""),
-                country_iso3=str(meta.get("country_iso3") or ""),
-                party_id=_none_if_empty(meta.get("party_id")),
-                doc_date=_none_if_empty(meta.get("doc_date")),
-                doc_type=_none_if_empty(meta.get("doc_type")),
-            )
-        )
-        if len(items) >= limit:
+        unique.append(item)
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    seen_sections: set[str] = set()
+    for item in unique:
+        section = str((item.get("meta") or {}).get("section_title") or "").casefold()
+        if not section or section in seen_sections:
+            continue
+        seen_sections.add(section)
+        selected.append(item)
+        selected_ids.add(str(item.get("segment_id")))
+        if len(selected) >= limit:
             break
-    return items
+    for item in unique:
+        if len(selected) >= limit:
+            break
+        if str(item.get("segment_id")) not in selected_ids:
+            selected.append(item)
+
+    return [
+        _general_context_from_record(item, index)
+        for index, item in enumerate(selected, start=1)
+    ]
+
+
+def _general_context_from_record(item: dict[str, Any], index: int) -> GeneralContext:
+    meta = item.get("meta") or {}
+    parent_id = str(meta.get("parent_segment_id") or "")
+    return GeneralContext(
+        ref_id=f"C{index}",
+        segment_id=parent_id or str(item.get("segment_id") or ""),
+        text=str(item.get("parent_text") or item.get("text") or ""),
+        country_iso3=str(meta.get("country_iso3") or ""),
+        party_id=_none_if_empty(meta.get("party_id")),
+        doc_date=_none_if_empty(meta.get("doc_date")),
+        doc_type=_none_if_empty(meta.get("doc_type")),
+        section_title=_none_if_empty(meta.get("section_title")),
+    )
 
 
 def build_messages(
@@ -852,20 +896,23 @@ def build_messages(
     general_context: list[GeneralContext] | None = None,
     graph_context: list[dict[str, Any]] | None = None,
     question_analysis: QueryAnalysis | None = None,
+    retrieval: RetrievalBundle | None = None,
 ) -> list[dict[str, str]]:
     prompt_citations = citations[:settings.chat_max_prompt_citations]
-    evidence_context = "\n\n".join(
-        f"[{citation.ref_id}] "
-        f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
-        f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
-        f"reliability={citation.reliability or 'unknown'}\n"
-        f"retrieval_reason={citation.retrieval_reason or 'not available'}\n"
-        f"local_parent_context={_compact_parent_context(citation)}\n"
-        f"{_excerpt(citation.text, max_chars=settings.chat_max_evidence_text_chars)}"
-        for citation in prompt_citations
+    retrieval_trace_text = format_retrieval_trace(retrieval.trace if retrieval else [])
+    budget = compute_prompt_budget(
+        len(prompt_citations),
+        len(general_context or []),
+        len(graph_context or []),
+        extra_overhead_chars=max(0, len(retrieval_trace_text) - 100),
     )
-    general_context_text = format_general_context_for_prompt(general_context or [])
-    relational_context_text = format_graph_context_for_prompt(graph_context or [])
+    evidence_context = format_evidence_for_prompt(prompt_citations, budget)
+    general_context_text = format_general_context_for_prompt(
+        general_context or [], max_chars=budget.general_chars,
+    )
+    relational_context_text = format_graph_context_for_prompt(
+        graph_context or [], max_chars=budget.graph_chars,
+    )
     analytical_context_text = build_analytical_context(question)
     question_analysis_text = (
         format_query_analysis(question_analysis)
@@ -878,12 +925,14 @@ def build_messages(
         "Your task is evidence-grounded analysis, not open-ended political commentary. "
         "Use only the material in this prompt. Do not use outside knowledge, memory, assumptions, or likely facts. "
         "QUESTION_ANALYSIS is a retrieval plan, not factual evidence, and must never be cited. "
+        "RETRIEVAL_TRACE explains selection steps and scores; it is not evidence and must never be cited. "
         "There are four evidence-framing inputs: ANALYTICAL_CONTEXT, GENERAL_CONTEXT, RELATIONAL_CONTEXT, and CITED_EVIDENCE. "
         "ANALYTICAL_CONTEXT gives a political-science reading frame; it is not factual evidence and must never be cited. "
         "GENERAL_CONTEXT gives document-level orientation only; it is not proof and must never be cited. "
         "RELATIONAL_CONTEXT contains inferred entity co-occurrences from the political graph. It is not verified fact, "
         "must never be cited, and must be ignored when it conflicts with CITED_EVIDENCE. "
-        "CITED_EVIDENCE contains the only passages that may support claims. "
+        "CITED_EVIDENCE contains PRIMARY_EVIDENCE, NUANCE_EVIDENCE, and COUNTER_EVIDENCE_CANDIDATES. "
+        "All are citable passages, but a counter-evidence candidate must be described as contradictory only when its text actually conflicts. "
         "Every substantive political claim must end with an inline citation like [S1] or [S2]. "
         "Never cite [A], [C1], [C2], [R1], or any analytical/general/relational-context label. "
         "If the cited evidence does not answer the question, say that the provided evidence is insufficient and explain what is missing. "
@@ -894,6 +943,8 @@ def build_messages(
         "Do not add a separate bibliography or sources section; the interface adds sources separately. "
         "Do not infer motives, psychology, or hidden positions beyond the passages. "
         "Do not overinterpret; if a conclusion is not directly supported, phrase it cautiously or say the evidence is insufficient. "
+        "Distinguish direct declaration from synthesis: say 'the passage explicitly states' only when one passage says it directly; "
+        "for a synthesis use cautious wording such as 'taken together, the cited passages suggest'. "
         "Prefer short evidence-linked sentences over broad summaries. "
         "Use only source ids shown in CITED_EVIDENCE; if a claim lacks an [S] source, omit it. "
         "Before answering, internally verify that each sentence with a political claim has at least one [S] citation. "
@@ -907,6 +958,8 @@ def build_messages(
         f"Question: {question}\n\n"
         "QUESTION_ANALYSIS - retrieval plan only, never cite this block:\n"
         f"{question_analysis_text}\n\n"
+        "RETRIEVAL_TRACE - selection audit only, never cite this block:\n"
+        f"{retrieval_trace_text}\n\n"
         "ANALYTICAL_CONTEXT - conceptual reading frame, never cite this block:\n"
         f"{analytical_context_text}\n\n"
         "GENERAL_CONTEXT - background only, never cite this block:\n"
@@ -916,10 +969,11 @@ def build_messages(
         "CITED_EVIDENCE - the only claim-supporting evidence:\n"
         f"{evidence_context}\n\n"
         "Answer contract:\n"
-        "- Answer the question directly.\n"
+        "- Start with a direct answer, then organize the supporting points clearly.\n"
         "- Use [S1], [S2], etc. for every claim.\n"
         "- Never invent source ids. Use only the [S] ids present above.\n"
         "- Use ANALYTICAL_CONTEXT only to understand the political concept being asked about.\n"
+        "- Label direct declarations as explicit and multi-source interpretations as cautious synthesis.\n"
         "- Do not cite [A], [C1], [R1], or other analytical/general/relational-context labels.\n"
         "- If no [S] passage supports the answer, say evidence is insufficient.\n"
         "- If evidence is weak or absent, say so explicitly."
@@ -939,20 +993,42 @@ def attach_parent_context(memory: Any, records: list[dict[str, Any]]) -> list[di
         for record in records
         if (record.get("meta") or {}).get("parent_segment_id")
     })
-    if not parent_ids or not hasattr(memory, "fetch_by_ids"):
+    if not parent_ids:
         return records
     try:
-        parent_texts = memory.fetch_by_ids(parent_ids)
+        if hasattr(memory, "fetch_records_by_ids"):
+            parent_records = {
+                item["segment_id"]: item
+                for item in memory.fetch_records_by_ids(parent_ids)
+            }
+        elif hasattr(memory, "fetch_by_ids"):
+            parent_records = {
+                segment_id: {"segment_id": segment_id, "text": text, "meta": {}}
+                for segment_id, text in memory.fetch_by_ids(parent_ids).items()
+            }
+        else:
+            return records
     except Exception:
         return records
     enriched: list[dict[str, Any]] = []
     for record in records:
         item = dict(record)
-        parent_id = (item.get("meta") or {}).get("parent_segment_id", "")
-        if parent_id and parent_id in parent_texts:
-            item["parent_text"] = parent_texts[parent_id]
+        meta = item.get("meta") or {}
+        parent_id = meta.get("parent_segment_id", "")
+        parent = parent_records.get(parent_id)
+        if parent and _same_scope_metadata(meta, parent.get("meta") or {}):
+            item["parent_text"] = parent.get("text") or ""
         enriched.append(item)
     return enriched
+
+
+def _same_scope_metadata(child: dict[str, Any], parent: dict[str, Any]) -> bool:
+    for key in ("doc_id", "country_iso3", "party_id", "election_id", "language"):
+        left = str(child.get(key) or "")
+        right = str(parent.get(key) or "")
+        if left and right and left != right:
+            return False
+    return True
 
 
 def retrieve_general_context(
@@ -960,49 +1036,78 @@ def retrieve_general_context(
     question: str,
     request: ChatRequest,
     evidence_records: list[dict[str, Any]],
+    analysis: QueryAnalysis,
 ) -> list[GeneralContext]:
-    """Retrieve broad parent-level context without mixing it into citations."""
-    try:
-        if hasattr(memory, "query_documents_hybrid"):
-            records = memory.query_documents_hybrid(
-                build_general_context_query(question),
-                as_of=request.as_of,
-                k=_MAX_GENERAL_CONTEXT_ITEMS,
-                party_id=request.party_id,
-                include_unverified=request.include_unverified,
-                include_parent_segments=True,
-            )
-        else:
-            records = memory.query_documents(
-                build_general_context_query(question),
-                as_of=request.as_of,
-                k=_MAX_GENERAL_CONTEXT_ITEMS,
-                party_id=request.party_id,
-                include_unverified=request.include_unverified,
-                include_parent_segments=True,
-            )
-    except TypeError:
+    """Select broad and topically distinct parent chunks as non-cited context."""
+    records: list[dict[str, Any]] = []
+    queries = build_general_context_queries(question, analysis)
+    for query in queries:
         try:
-            records = memory.query_documents(
-                build_general_context_query(question),
-                as_of=request.as_of,
-                k=_MAX_GENERAL_CONTEXT_ITEMS,
-                party_id=request.party_id,
-                include_unverified=request.include_unverified,
-                include_parent_segments=True,
-            )
+            if hasattr(memory, "query_parent_documents_hybrid"):
+                found = memory.query_parent_documents_hybrid(
+                    query,
+                    as_of=request.as_of,
+                    k=settings.chat_general_context_items * 2,
+                    party_id=request.party_id,
+                    include_unverified=request.include_unverified,
+                )
+            elif hasattr(memory, "query_documents_hybrid"):
+                found = memory.query_documents_hybrid(
+                    query,
+                    as_of=request.as_of,
+                    k=settings.chat_general_context_items * 2,
+                    party_id=request.party_id,
+                    include_unverified=request.include_unverified,
+                    include_parent_segments=True,
+                )
+            else:
+                try:
+                    found = memory.query_documents(
+                        query,
+                        as_of=request.as_of,
+                        k=settings.chat_general_context_items * 2,
+                        party_id=request.party_id,
+                        include_unverified=request.include_unverified,
+                        include_parent_segments=True,
+                    )
+                except TypeError:
+                    found = memory.query_documents(
+                        query,
+                        as_of=request.as_of,
+                        k=settings.chat_general_context_items * 2,
+                        party_id=request.party_id,
+                        include_unverified=request.include_unverified,
+                    )
         except Exception:
-            return build_general_context_items(evidence_records, limit=2)
-    except Exception:
-        return build_general_context_items(evidence_records, limit=2)
-    return build_general_context_items(records, limit=_MAX_GENERAL_CONTEXT_ITEMS)
-
-
-def build_general_context_query(question: str) -> str:
-    return (
-        f"{question} manifesto overall political program party priorities "
-        "general orientation policy agenda election platform"
+            continue
+        records.extend(found)
+    country = str(getattr(memory, "country", "") or "")
+    scoped = [
+        record for record in records
+        if record_in_scope(
+            record,
+            as_of=request.as_of,
+            country_iso3=country,
+            party_id=request.party_id,
+            election_id=request.election_id,
+            include_unverified=request.include_unverified,
+        )
+    ]
+    if not scoped:
+        scoped = evidence_records
+    return build_general_context_items(
+        scoped,
+        limit=settings.chat_general_context_items,
     )
+
+
+def build_general_context_queries(question: str, analysis: QueryAnalysis) -> list[str]:
+    focus = " ".join(analysis.themes[:3]).strip()
+    queries = [
+        f"{question} overall manifesto orientation values priorities",
+        f"{focus} broader program context objectives instruments".strip(),
+    ]
+    return list(dict.fromkeys(query for query in queries if query.strip()))
 
 
 def retrieve_graph_context(
@@ -1076,21 +1181,109 @@ def build_analytical_context(question: str) -> str:
     return _excerpt("\n".join(lines), max_chars=_MAX_ANALYTICAL_CONTEXT_CHARS)
 
 
-def format_general_context_for_prompt(items: list[GeneralContext]) -> str:
+def compute_prompt_budget(
+    citation_count: int,
+    general_count: int,
+    graph_count: int,
+    extra_overhead_chars: int = 0,
+) -> PromptBudget:
+    target_chars = int(
+        max(800, settings.chat_llm_context_window - settings.chat_prompt_reserved_output_tokens)
+        * settings.chat_prompt_chars_per_token
+    )
+    content_chars = max(900, target_chars - 5200 - extra_overhead_chars)
+    evidence_total = int(content_chars * 0.45)
+    parent_total = int(content_chars * 0.22)
+    general_total = int(content_chars * 0.25)
+    graph_total = max(100, content_chars - evidence_total - parent_total - general_total)
+    return PromptBudget(
+        evidence_chars=min(
+            settings.chat_max_evidence_text_chars,
+            max(140, evidence_total // max(1, citation_count)),
+        ),
+        parent_chars=min(
+            settings.chat_max_parent_context_chars,
+            max(80, parent_total // max(1, citation_count)),
+        ),
+        general_chars=min(
+            settings.chat_max_general_context_chars,
+            max(120, general_total // max(1, general_count)),
+        ),
+        graph_chars=max(80, graph_total // max(1, graph_count)),
+        target_chars=target_chars,
+    )
+
+
+def format_evidence_for_prompt(
+    citations: list[Citation],
+    budget: PromptBudget,
+) -> str:
+    labels = {
+        "primary": "PRIMARY_EVIDENCE",
+        "nuance": "NUANCE_EVIDENCE",
+        "counter": "COUNTER_EVIDENCE_CANDIDATES",
+    }
+    blocks: list[str] = []
+    for role in ("primary", "nuance", "counter"):
+        role_citations = [citation for citation in citations if citation.evidence_role == role]
+        if not role_citations:
+            continue
+        passages = "\n\n".join(
+            f"[{citation.ref_id}] "
+            f"country={citation.country_iso3 or 'unknown'} party={citation.party_id or 'unknown'} "
+            f"date={citation.doc_date or 'unknown'} type={citation.doc_type or 'unknown'} "
+            f"reliability={citation.reliability or 'unknown'}\n"
+            f"retrieval_reason={citation.retrieval_reason or 'not available'}\n"
+            f"local_parent_context={_compact_parent_context(citation, budget.parent_chars)}\n"
+            f"{_excerpt(citation.text, max_chars=budget.evidence_chars)}"
+            for citation in role_citations
+        )
+        blocks.append(f"{labels[role]}:\n{passages}")
+    return "\n\n".join(blocks) or "No citable evidence retrieved."
+
+
+def format_retrieval_trace(trace: list[dict[str, Any]]) -> str:
+    if not trace:
+        return "No retrieval trace available."
+    lines: list[str] = []
+    for step in trace:
+        stage = str(step.get("stage") or "step")
+        details = ", ".join(
+            f"{key}={value}"
+            for key, value in step.items()
+            if key != "stage" and key not in {"selected_ids"}
+        )
+        lines.append(f"- {stage}: {details}"[:320])
+    rendered = "\n".join(lines)
+    limit = settings.chat_max_retrieval_trace_chars
+    if len(rendered) > limit:
+        return rendered[: limit - 28].rstrip() + "\n- trace: truncated for budget"
+    return rendered
+
+
+def format_general_context_for_prompt(
+    items: list[GeneralContext],
+    max_chars: int | None = None,
+) -> str:
     if not items:
         return "No separate general context retrieved."
     lines = []
-    for item in items[:_MAX_GENERAL_CONTEXT_ITEMS]:
+    text_limit = max_chars or settings.chat_max_general_context_chars
+    for item in items[:settings.chat_general_context_items]:
         lines.append(
             f"[{item.ref_id}] country={item.country_iso3 or 'unknown'} "
             f"party={item.party_id or 'unknown'} date={item.doc_date or 'unknown'} "
-            f"type={item.doc_type or 'unknown'} segment={item.segment_id}\n"
-            f"{_excerpt(item.text, max_chars=_MAX_GENERAL_CONTEXT_CHARS)}"
+            f"type={item.doc_type or 'unknown'} segment={item.segment_id} "
+            f"section={item.section_title or 'unknown'}\n"
+            f"{_excerpt(item.text, max_chars=text_limit)}"
         )
     return "\n\n".join(lines)
 
 
-def format_graph_context_for_prompt(items: list[dict[str, Any]]) -> str:
+def format_graph_context_for_prompt(
+    items: list[dict[str, Any]],
+    max_chars: int = 260,
+) -> str:
     if not items:
         return "No relevant political-graph context retrieved."
     lines = []
@@ -1099,15 +1292,18 @@ def format_graph_context_for_prompt(items: list[dict[str, Any]]) -> str:
         if summary:
             lines.append(
                 f"[R{index}] [INFERRED, NOT EVIDENCE] "
-                f"{_excerpt(summary, max_chars=260)}"
+                f"{_excerpt(summary, max_chars=max_chars)}"
             )
     return "\n".join(lines) or "No relevant political-graph context retrieved."
 
 
-def _compact_parent_context(citation: Citation) -> str:
+def _compact_parent_context(citation: Citation, max_chars: int | None = None) -> str:
     if not citation.parent_text:
         return "none"
-    return _excerpt(citation.parent_text, max_chars=_MAX_PARENT_CONTEXT_CHARS)
+    return _excerpt(
+        citation.parent_text,
+        max_chars=max_chars or settings.chat_max_parent_context_chars,
+    )
 
 
 def extract_segment_ids(text: str) -> list[str]:
@@ -1332,6 +1528,117 @@ def strip_appended_sources(answer: str) -> str:
     return stripped
 
 
+def generate_validated_answer(
+    *,
+    model_name: str,
+    messages: list[dict[str, str]],
+    citations: list[Citation],
+    route: str,
+    complete: Any,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, str]]]:
+    """Generate, validate, and repair with the exact same evidence package."""
+    trace: list[dict[str, Any]] = []
+    current_messages = list(messages)
+    last_error: Exception | None = None
+    for attempt in range(settings.chat_repair_max_attempts + 1):
+        raw = ""
+        try:
+            raw = complete(
+                model_name,
+                current_messages,
+                temperature=0.0,
+                max_tokens=min(settings.llm_max_tokens, _MAX_CHAT_OUTPUT_TOKENS),
+            )
+            if not raw:
+                raise AnswerContractError("empty answer")
+            answer = strip_appended_sources(raw)
+            try:
+                validate_llm_answer(answer, citations, route=route)
+            except Exception as syntax_exc:
+                trace.append({
+                    "stage": "syntax",
+                    "attempt": attempt,
+                    "status": "rejected",
+                    "error": str(syntax_exc),
+                })
+                raise
+            trace.append({
+                "stage": "syntax",
+                "attempt": attempt,
+                "status": "accepted",
+            })
+            if settings.chat_semantic_validation_enabled:
+                claims = evaluate_semantic_grounding(answer, citations)
+                trace.extend({
+                    "stage": "nli_claim",
+                    "attempt": attempt,
+                    "status": claim.status,
+                    "claim": claim.claim,
+                    "refs": claim.refs,
+                    "best_label": claim.best_label,
+                    "best_score": round(claim.best_score, 4),
+                } for claim in claims)
+                rejected = [claim for claim in claims if claim.status == "rejected"]
+                if rejected:
+                    raise AnswerContractError(
+                        f"{len(rejected)} claim(s) failed semantic grounding"
+                    )
+            trace.append({
+                "stage": "answer",
+                "attempt": attempt,
+                "status": "accepted",
+            })
+            return answer, trace, current_messages
+        except Exception as exc:
+            last_error = exc
+            trace.append({
+                "stage": "answer",
+                "attempt": attempt,
+                "status": "rejected",
+                "error": str(exc),
+            })
+            if attempt >= settings.chat_repair_max_attempts:
+                break
+            current_messages = build_repair_messages(
+                messages,
+                raw,
+                trace,
+                citations,
+            )
+    raise RepairExhaustedError(
+        f"answer validation failed after repair: {last_error}",
+        trace,
+    ) from last_error
+
+
+def build_repair_messages(
+    original_messages: list[dict[str, str]],
+    rejected_answer: str,
+    trace: list[dict[str, Any]],
+    citations: list[Citation],
+) -> list[dict[str, str]]:
+    allowed = ", ".join(citation.ref_id for citation in citations)
+    failures = [
+        str(step.get("error") or step.get("claim") or "validation failure")
+        for step in trace
+        if step.get("status") == "rejected"
+    ][-8:]
+    instruction = (
+        "Your draft failed COMPASS validation. Rewrite it, using exactly the same evidence already "
+        "present in the previous user message. Do not retrieve, add, or assume new information. "
+        f"Allowed source ids: {allowed}. Every substantive political claim needs an inline source id. "
+        "Use 'the passage explicitly states' only for a direct statement. For a synthesis, write "
+        "'taken together, the cited passages suggest' and cite all supporting sources. If support is "
+        "insufficient, abstain explicitly. Validation failures:\n- "
+        + "\n- ".join(failures)
+    )
+    return [
+        *original_messages,
+        {"role": "assistant", "content": rejected_answer},
+        {"role": "user", "content": instruction},
+    ]
+
+
 def validate_llm_answer(
     answer: str,
     citations: list[Citation],
@@ -1370,6 +1677,14 @@ def validate_llm_answer(
 
     if not source_refs and not _is_insufficiency_answer(text):
         raise AnswerContractError("substantive answer without cited evidence")
+    uncited = [
+        sentence for sentence in _substantive_sentences(text)
+        if not any(ref.startswith("S") for ref in _ANSWER_REF_RE.findall(sentence))
+    ]
+    if uncited and not _is_insufficiency_answer(text):
+        raise AnswerContractError(
+            "uncited substantive claim: " + _ANSWER_REF_RE.sub("", uncited[0])[:180]
+        )
 
 
 def _is_insufficiency_answer(answer: str) -> bool:
@@ -1377,27 +1692,35 @@ def _is_insufficiency_answer(answer: str) -> bool:
     return any(marker in lowered for marker in _INSUFFICIENT_MARKERS)
 
 
-def validate_semantic_grounding(answer: str, citations: list[Citation]) -> None:
-    """Optionally verify cited claim sentences with the shared NLI model.
+def _substantive_sentences(answer: str) -> list[str]:
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", answer.strip())
+    return [
+        sentence.strip(" -*#")
+        for sentence in sentences
+        if len(sentence.strip(" -*#").split()) >= 4
+        and not sentence.strip().endswith(":")
+    ]
 
-    This guard is deliberately opt-in: generic multilingual NLI can reject
-    valid analytical paraphrases. When enabled, a failed implication raises
-    ``AnswerContractError`` and the normal extractive fallback takes over.
-    """
+
+def evaluate_semantic_grounding(
+    answer: str,
+    citations: list[Citation],
+) -> list[ClaimValidation]:
+    """Return phrase-level NLI decisions without hiding rejected claims."""
     from compass.nlp_models import nli_pipeline
 
     by_ref = {citation.ref_id: citation for citation in citations}
     classifier = nli_pipeline()
-    claim_sentences = re.split(r"(?<=[.!?])\s+|\n+", answer.strip())
-    checked = 0
-    for sentence in claim_sentences:
+    decisions: list[ClaimValidation] = []
+    for sentence in _substantive_sentences(answer):
         refs = [ref for ref in _ANSWER_REF_RE.findall(sentence) if ref.startswith("S")]
         if not refs:
             continue
         claim = _ANSWER_REF_RE.sub("", sentence).strip()
         if not claim:
             continue
-        checked += 1
+        best_label: str | None = None
+        best_score = 0.0
         supported = False
         for ref in refs:
             citation = by_ref.get(ref)
@@ -1408,13 +1731,42 @@ def validate_semantic_grounding(answer: str, citations: list[Citation]) -> None:
                 result = result[0] if result else {}
             label = str((result or {}).get("label") or "").lower()
             score = float((result or {}).get("score") or 0.0)
+            if score > best_score:
+                best_label, best_score = label, score
             if "entail" in label and score >= settings.chat_nli_entailment_threshold:
                 supported = True
-                break
-        if not supported:
-            raise AnswerContractError("semantic grounding check failed")
-    if not checked and not _is_insufficiency_answer(answer):
+        if not supported and len(refs) > 1:
+            combined = "\n".join(
+                by_ref[ref].text for ref in refs if ref in by_ref
+            )
+            if combined:
+                result = classifier({"text": combined, "text_pair": claim})
+                if isinstance(result, list):
+                    result = result[0] if result else {}
+                label = str((result or {}).get("label") or "").lower()
+                score = float((result or {}).get("score") or 0.0)
+                if score > best_score:
+                    best_label, best_score = label, score
+                supported = (
+                    "entail" in label
+                    and score >= settings.chat_nli_entailment_threshold
+                )
+        decisions.append(ClaimValidation(
+            claim=claim,
+            refs=refs,
+            status="accepted" if supported else "rejected",
+            best_label=best_label,
+            best_score=best_score,
+        ))
+    if not decisions and not _is_insufficiency_answer(answer):
         raise AnswerContractError("semantic grounding found no cited claim")
+    return decisions
+
+
+def validate_semantic_grounding(answer: str, citations: list[Citation]) -> None:
+    decisions = evaluate_semantic_grounding(answer, citations)
+    if any(decision.status == "rejected" for decision in decisions):
+        raise AnswerContractError("semantic grounding check failed")
 
 
 def validation_policy_for_route(route: str) -> str:

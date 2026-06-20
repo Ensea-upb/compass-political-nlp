@@ -40,6 +40,8 @@ recherche dense ChromaDB
 → reranking cross-encoder
 ```
 
+Chaque sous-requête traverse dense + BM25. Le parent est rattaché avant le reranking afin que le cross-encoder évalue `requête × (parent + segment)`. Les classements sont fusionnés, dédupliqués et diversifiés. Trois recherches distinctes produisent les preuves principales, les nuances et les contre-preuves candidates. Un filtre final vérifie pays, parti, élection, date et statut temporel avant toute transmission au prompt.
+
 ### 5. Construction du prompt
 
 Le prompt distingue :
@@ -48,9 +50,13 @@ Le prompt distingue :
 - `GENERAL_CONTEXT` : contexte documentaire non citable ;
 - `CITED_EVIDENCE` : seules preuves autorisées, référencées par `[Sx]`.
 
+`CITED_EVIDENCE` est lui-même divisé en `PRIMARY_EVIDENCE`, `NUANCE_EVIDENCE` et `COUNTER_EVIDENCE_CANDIDATES`. Le contexte général sélectionne plusieurs parents appartenant à des sections différentes. Son budget, celui des parents et celui des preuves sont calculés depuis la fenêtre de contexte déclarée pour vLLM.
+
 ### 6. Génération et validation
 
-Le LLM produit une réponse courte et sourcée. `AnswerValidator` applique une politique dépendante de la route : validation stricte pour une question politique, aucune exigence `[Sx]` pour une réponse déterministe de périmètre ou un lookup direct.
+Le LLM produit une réponse directe et sourcée. Il doit distinguer une déclaration explicite d'une synthèse prudente. `AnswerValidator` vérifie chaque affirmation et ses identifiants `[Sx]`. La validation NLI confronte ensuite chaque phrase aux passages cités, individuellement puis conjointement lorsque plusieurs sources soutiennent une synthèse.
+
+Si une affirmation échoue, le même LLM reçoit son brouillon, les erreurs et exactement le même paquet de preuves. Une seule réparation est tentée par défaut, sans nouveau retrieval. Le fallback extractif n'intervient qu'après l'échec de cette correction. Les affirmations acceptées et rejetées restent dans `validation_trace`.
 
 ### 7. Dégradation contrôlée
 

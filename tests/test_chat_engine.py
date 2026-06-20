@@ -2,6 +2,7 @@ from datetime import date
 from types import SimpleNamespace
 
 import compass.chat.engine as chat_engine
+import pytest
 from compass.chat import ChatEngine, ChatRequest
 from compass.chat.engine import (
     build_analytical_context,
@@ -19,6 +20,11 @@ from compass.chat.engine import (
     validate_semantic_grounding,
     validation_policy_for_route,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_nli_by_default(monkeypatch):
+    monkeypatch.setattr(chat_engine.settings, "chat_semantic_validation_enabled", False)
 
 
 class FakeMemory:
@@ -226,11 +232,13 @@ def test_chat_engine_uses_structured_llm_subqueries(monkeypatch):
     )
 
     evidence_queries = [query for query in memory.queries if "manifesto overall" not in query]
-    assert evidence_queries == [
+    assert evidence_queries[:3] == [
         "What does this party say about constitutional reform?",
         "constitutional reform institutions",
         "constitutional change commitments evidence",
     ]
+    assert any("conditions limits exceptions" in query for query in evidence_queries)
+    assert any("opposition rejection criticism" in query for query in evidence_queries)
     assert response.query_analysis["method"] == "llm"
     assert response.query_analysis["themes"] == ["constitutional reform"]
 
@@ -529,6 +537,125 @@ def test_optional_semantic_grounding_accepts_entailment(monkeypatch):
     validate_semantic_grounding("The party supports democratic accountability [S1].", citations)
 
 
+def test_semantic_grounding_accepts_jointly_supported_synthesis(monkeypatch):
+    records = FakeMemory().query_documents("q", date(2009, 9, 27))
+    records.append({
+        **records[0],
+        "segment_id": "doc1:p001c000",
+        "text": "The party supports transparent elections.",
+    })
+    citations = build_citations(records)
+
+    def classifier(pair):
+        if "\n" in pair["text"]:
+            return {"label": "entailment", "score": 0.95}
+        return {"label": "neutral", "score": 0.8}
+
+    monkeypatch.setattr("compass.nlp_models.nli_pipeline", lambda: classifier)
+
+    validate_semantic_grounding(
+        "Taken together, the passages suggest support for democratic accountability and elections [S1] [S2].",
+        citations,
+    )
+
+
+def test_chat_repairs_rejected_nli_claim_with_same_evidence(monkeypatch):
+    class CountingMemory(FakeMemory):
+        def __init__(self):
+            self.calls = 0
+
+        def query_documents(self, *args, **kwargs):
+            self.calls += 1
+            return super().query_documents(*args, **kwargs)
+
+    answers = iter([
+        "The party abolishes democratic accountability [S1].",
+        "The party supports democratic accountability [S1].",
+    ])
+
+    def fake_complete(model, messages, **kwargs):
+        return next(answers)
+
+    def classifier(pair):
+        if "abolishes" in pair["text_pair"]:
+            return {"label": "neutral", "score": 0.91}
+        return {"label": "entailment", "score": 0.98}
+
+    memory = CountingMemory()
+    monkeypatch.setattr(chat_engine.settings, "chat_query_analysis_enabled", False)
+    monkeypatch.setattr(chat_engine.settings, "chat_semantic_validation_enabled", True)
+    monkeypatch.setattr(chat_engine.settings, "chat_repair_max_attempts", 1)
+    monkeypatch.setattr(chat_engine, "complete_chat", fake_complete)
+    monkeypatch.setattr("compass.nlp_models.nli_pipeline", lambda: classifier)
+
+    response = ChatEngine(memory, model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="P100")
+    )
+
+    assert response.llm_used is True
+    assert "supports democratic accountability" in response.answer
+    assert any(step["status"] == "rejected" for step in response.validation_trace)
+    assert response.validation_trace[-1]["status"] == "accepted"
+    assert response.prompt_messages[-1]["role"] == "user"
+    assert "same evidence" in response.prompt_messages[-1]["content"]
+
+
+def test_chat_falls_back_after_repair_is_exhausted(monkeypatch):
+    monkeypatch.setattr(chat_engine.settings, "chat_query_analysis_enabled", False)
+    monkeypatch.setattr(chat_engine.settings, "chat_semantic_validation_enabled", True)
+    monkeypatch.setattr(chat_engine.settings, "chat_repair_max_attempts", 1)
+    monkeypatch.setattr(
+        chat_engine,
+        "complete_chat",
+        lambda *args, **kwargs: "The party abolishes accountability [S1].",
+    )
+    monkeypatch.setattr(
+        "compass.nlp_models.nli_pipeline",
+        lambda: lambda pair: {"label": "neutral", "score": 0.99},
+    )
+
+    response = ChatEngine(FakeMemory(), model_name="local-test-model").ask(
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27), party_id="P100")
+    )
+
+    assert response.llm_used is False
+    assert "Reponse extractive COMPASS" in response.answer
+    rejected = [step for step in response.validation_trace if step["status"] == "rejected"]
+    assert len(rejected) >= 2
+
+
+def test_syntax_validator_requires_citation_for_each_claim():
+    citations = build_citations(FakeMemory().query_documents("q", date(2009, 9, 27)))
+
+    with pytest.raises(chat_engine.AnswerContractError, match="uncited substantive claim"):
+        validate_llm_answer(
+            "The party supports accountability [S1]. It also supports an uncited reform.",
+            citations,
+        )
+
+
+def test_prompt_separates_primary_nuance_and_counter_evidence():
+    records = []
+    for role, index in (("primary", 1), ("nuance", 2), ("counter", 3)):
+        record = FakeMemory().query_documents("q", date(2009, 9, 27))[0]
+        records.append({
+            **record,
+            "segment_id": f"doc1:p00{index}c000",
+            "evidence_role": role,
+        })
+    citations = build_citations(records)
+    messages = build_messages(
+        "What about democracy?",
+        citations,
+        ChatRequest(question="What about democracy?", as_of=date(2009, 9, 27)),
+    )
+    prompt = messages[-1]["content"]
+
+    assert "PRIMARY_EVIDENCE" in prompt
+    assert "NUANCE_EVIDENCE" in prompt
+    assert "COUNTER_EVIDENCE_CANDIDATES" in prompt
+
+
 def test_compact_history_trims_sources_and_long_answers():
     history = [
         {"role": "user", "content": "q"},
@@ -765,13 +892,25 @@ def test_chat_prompt_is_bounded_for_small_vllm_contexts():
             ],
         ),
         general,
+        retrieval=chat_engine.RetrievalBundle(trace=[
+            {
+                "stage": "query",
+                "lane": "primary",
+                "query": "long query " + ("q" * 600),
+                "retrieved": 24,
+            }
+            for _ in range(12)
+        ]),
     )
 
     prompt = "\n".join(message["content"] for message in messages)
-    # About 1.5k tokens: bounded well below the 4k vLLM demo context while
-    # preserving more of each passage than the previous 180-character limit.
-    assert len(prompt) < 7000
+    target_chars = int(
+        (chat_engine.settings.chat_llm_context_window - chat_engine.settings.chat_prompt_reserved_output_tokens)
+        * chat_engine.settings.chat_prompt_chars_per_token
+    )
+    assert len(prompt) <= target_chars
     assert "[S4]" in prompt
     assert "[S5]" not in prompt
     assert "[C1]" in prompt
-    assert "segment=doc1:p001" not in prompt
+    assert "[C3]" in prompt
+    assert "segment=doc1:p003" not in prompt

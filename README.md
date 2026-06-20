@@ -72,7 +72,8 @@ Guides associés :
 - [exécution pas à pas sur Onyxia](docs/09_onyxia_runbook.md) ;
 - [modèles Hugging Face et serveur vLLM](docs/11_onyxia_hf_models.md) ;
 - [ingestion du Manifesto Project](docs/12_manifesto_pdf_ingestion.md) ;
-- [interface COMPASS Chat](docs/13_chat_interface.md).
+- [interface COMPASS Chat](docs/13_chat_interface.md) ;
+- [validation du RAG expert sur Onyxia](docs/14_rag_expert_onyxia.md).
 
 ## Deux niveaux de démonstration
 
@@ -102,6 +103,8 @@ Le dépôt implémente notamment :
 - l'indexation par pays dans ChromaDB ;
 - le retrieval dense + BM25 et le reranking cross-encoder ;
 - l'analyse structurée des questions par LLM local, avec JSON strict, sous-requêtes et fallback déterministe ;
+- le retrieval expert en trois lanes, avec diversité, filtrage de périmètre et trace inspectable ;
+- la génération citée avec validation NLI phrase par phrase et une tentative de réparation ;
 - l'ingestion Manifesto Project avec repli vers `texts_and_annotations` lorsque le PDF est bloqué ;
 - un chat RAG avec citations `[Sx]`, page d'inspection du prompt, routage sélectionnable et validation dépendante de la route ;
 - une façade scientifique du chat vers `CompassRunner` via `/analyse <variable_id>`, avec validation C14 séparée ;
