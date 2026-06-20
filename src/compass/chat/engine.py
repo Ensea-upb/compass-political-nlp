@@ -1018,7 +1018,13 @@ def build_messages(
         "- Label direct declarations as explicit and multi-source interpretations as cautious synthesis.\n"
         "- Do not cite [A], [C1], [R1], or other analytical/general/relational-context labels.\n"
         "- If no [S] passage supports the answer, say evidence is insufficient.\n"
-        "- If evidence is weak or absent, say so explicitly."
+        "- If evidence is weak or absent, say so explicitly.\n\n"
+        "Format example (not real evidence, illustrates citation style only):\n"
+        "Question: What does the party say about taxation?\n"
+        "Correct answer: The party calls for lower payroll taxes on low incomes [S1]. "
+        "Taken together, the cited passages suggest this is framed as a fairness measure [S1][S2].\n"
+        "Wrong answer (missing citations): The party calls for lower payroll taxes on low incomes. "
+        "This is framed as a fairness measure."
     )
     history = compact_history(
         _previous_history_only(request.history, question),
