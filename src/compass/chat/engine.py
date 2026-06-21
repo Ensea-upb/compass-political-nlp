@@ -1616,12 +1616,14 @@ def compact_history(history: list[dict[str, str]], max_messages: int = 4, max_ch
             continue
         content = strip_appended_sources(msg.get("content", ""))
         if len(content) > max_chars:
-            tronque = content[:max_chars]
+            suffix = " […]"
+            budget = max_chars - len(suffix)
+            tronque = content[:budget]
             # reculer jusqu'à la dernière frontière de phrase pour ne pas réinjecter une phrase inachevée
             frontiere = max(tronque.rfind(". "), tronque.rfind("! "), tronque.rfind("? "))
-            if frontiere > max_chars // 2:
+            if frontiere > budget // 2:
                 tronque = tronque[: frontiere + 1]
-            content = tronque.rstrip() + " […]"
+            content = tronque.rstrip() + suffix
         compacted.append({"role": role, "content": content})
     return compacted
 
